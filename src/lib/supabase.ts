@@ -260,6 +260,38 @@ export async function deleteClinicFromDb(id: string): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------
+// Equipe (usuários do sistema = tabela profiles)
+// ---------------------------------------------------------------------
+
+export interface DbProfile {
+  id: string;
+  fullName: string;
+  email: string;
+  role: string;
+  isActive: boolean;
+  accessibleClinicIds: string[];
+}
+
+/** null = Supabase indisponível/erro. */
+export async function fetchProfilesFromDb(): Promise<DbProfile[] | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb.from('profiles').select('*').order('created_at', { ascending: true });
+  if (error) {
+    console.error('Erro ao carregar equipe do Supabase:', error.message);
+    return null;
+  }
+  return (data || []).map((r: any) => ({
+    id: r.id,
+    fullName: r.full_name || r.email,
+    email: r.email || '',
+    role: r.role || 'user',
+    isActive: r.is_active !== false,
+    accessibleClinicIds: r.accessible_clinic_ids || []
+  }));
+}
+
+// ---------------------------------------------------------------------
 // Leads
 // ---------------------------------------------------------------------
 
