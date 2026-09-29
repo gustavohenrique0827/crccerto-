@@ -1,0 +1,49 @@
+{
+  "entities": {
+    "clinic": {
+      "title": "Clinic",
+      "description": "Clinic document storing clinic configuration and Google Calendar sync interval",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "syncIntervalMinutes": { "type": "number" },
+        "autoSyncEnabled": { "type": "boolean" },
+        "googleCalendarSyncIntervalMinutes": { "type": "number" },
+        "updatedAt": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["id"]
+    },
+    "clinicGoogleSyncSettings": {
+      "title": "Clinic Google Sync Settings",
+      "description": "Google Calendar synchronization frequency and configuration per clinic",
+      "type": "object",
+      "properties": {
+        "clinicId": { "type": "string" },
+        "clinicName": { "type": "string" },
+        "syncIntervalMinutes": { "type": "number" },
+        "autoSyncEnabled": { "type": "boolean" },
+        "syncDirection": { "type": "string" },
+        "targetCalendarId": { "type": "string" },
+        "conflictResolution": { "type": "string" },
+        "applyToAllClinics": { "type": "boolean" },
+        "lastSyncAt": { "type": "string" },
+        "nextScheduledSyncAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["clinicId", "syncIntervalMinutes"]
+    }
+  },
+  "firestore": {
+    "/clinics/{clinicId}": {
+      "schema": "clinic",
+      "description": "Stores clinic records and Google Calendar sync interval"
+    },
+    "/clinics/{clinicId}/settings/google_sync": {
+      "schema": "clinicGoogleSyncSettings",
+      "description": "Stores dedicated Google Calendar synchronization preferences per clinic"
+    }
+  }
+}

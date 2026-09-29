@@ -1,0 +1,6 @@
+{
+  "name": "LeadGen CRM",
+  "description": "Plataforma líder em gestão de leads e aceleração de crescimento para redes de clínicas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
