@@ -119,6 +119,7 @@ export interface Lead {
   documents?: PatientDocument[];
   createdAt: string;
   tags: string[];
+  notes?: string;
 }
 
 export interface LeadTrackingData {

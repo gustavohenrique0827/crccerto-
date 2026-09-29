@@ -1,7 +1,10 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { Clinic, User, Role, Lead } from '../types';
 import { INITIAL_CLINICS, INITIAL_LEADS, seedLocalStorageIfEmpty } from '../lib/mockData';
-import { supabase, getSupabase, saveLeadToDb } from '../lib/supabase';
+import {
+  getSupabase, isSupabaseConfigured, saveLeadToDb, loadLeadsFromDb, isUuid, newUuid,
+  fetchClinicsFromDb, insertClinicInDb, updateClinicInDb, deleteClinicFromDb
+} from '../lib/supabase';
 import { SupabaseClient } from '@supabase/supabase-js';
 
 type Theme = 'light' | 'dark';
@@ -117,11 +120,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('storage', handleStorage);
   }, [refreshLeads]);
 
-  const addLead = useCallback(async (newLead: Lead) => {
+  const addLead = useCallback(async (incoming: Lead) => {
+    // Com Supabase o id precisa ser UUID
+    const newLead = isSupabaseConfigured() && !isUuid(incoming.id) ? { ...incoming, id: newUuid() } : incoming;
     setLeads(prev => [newLead, ...prev.filter(l => l.id !== newLead.id)]);
-    await saveLeadToDb(newLead);
+    const ok = await saveLeadToDb(newLead);
+    if (!ok) addToast('Não foi possível salvar o lead no banco de dados. Verifique a conexão e tente novamente.', 'error');
     refreshLeads();
-  }, [refreshLeads]);
+  }, [refreshLeads, addToast]);
 
   const [clinics, setClinics] = useState<Clinic[]>(() => {
     if (typeof window !== 'undefined') {
@@ -181,7 +187,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     clinicData: Omit<Clinic, 'id' | 'createdAt'>, 
     clientUser?: { name: string; email: string; password?: string; role?: Role }
   ): Clinic => {
-    const newId = String(Date.now());
+    const newId = isSupabaseConfigured() ? newUuid() : String(Date.now());
     const initials = clinicData.name.substring(0, 2).toUpperCase();
     const newClinic: Clinic = {
       ...clinicData,
@@ -193,6 +199,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const updated = [...clinics, newClinic];
     saveClinicsToStorage(updated);
+    insertClinicInDb(newClinic).then(ok => {
+      if (!ok) addToast(`Não foi possível salvar "${newClinic.name}" no banco de dados.`, 'error');
+    });
 
     // If a client account was specified, create corresponding user record
     if (clientUser && clientUser.email) {
@@ -221,7 +230,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const updateClinic = useCallback((id: string, updates: Partial<Clinic>) => {
     const updated = clinics.map(c => c.id === id ? { ...c, ...updates } : c);
     saveClinicsToStorage(updated);
-    addToast('Configurações da clínica salvas com sucesso!', 'success');
+    updateClinicInDb(id, updates).then(ok => {
+      if (ok) addToast('Configurações da clínica salvas com sucesso!', 'success');
+      else addToast('Não foi possível salvar as configurações no banco de dados.', 'error');
+    });
   }, [clinics, addToast]);
 
   const [user, setUser] = useState<User | null>(() => {
@@ -261,9 +273,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (currentClinicId === id) {
       setCurrentClinicId(updated[0]?.id || 'all');
     }
-    fetch(`/api/clinics/${id}`, { method: 'DELETE' }).catch(err => {
-      console.warn('Backend deletion warning:', err);
-    });
+    if (isSupabaseConfigured()) {
+      deleteClinicFromDb(id).then(ok => {
+        if (!ok) addToast('Não foi possível excluir a clínica no banco de dados.', 'error');
+      });
+    } else {
+      fetch(`/api/clinics/${id}`, { method: 'DELETE' }).catch(err => {
+        console.warn('Backend deletion warning:', err);
+      });
+    }
     addToast(`Clínica "${clinicToDelete?.name || ''}" removida com sucesso.`, 'info');
   }, [clinics, currentClinicId, setCurrentClinicId, addToast]);
 
@@ -322,7 +340,47 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [clinics, addToast]);
 
+  // Monta o usuário do app a partir do usuário do Supabase Auth + tabela profiles
+  const buildUserFromSession = useCallback(async (authUser: { id: string; email?: string | null }): Promise<User> => {
+    const sb = getSupabase();
+    let profile: any = null;
+    let allClinicIds: string[] = [];
+    if (sb) {
+      profile = (await sb.from('profiles').select('*').eq('id', authUser.id).maybeSingle()).data;
+      allClinicIds = ((await sb.from('clinics').select('id')).data || []).map((c: any) => c.id);
+    }
+    const dbRole: string = profile?.role || 'admin';
+    const role =
+      dbRole === 'super_admin' || dbRole === 'admin' ? Role.SUPER_ADMIN :
+      dbRole === 'receptionist' || dbRole === 'marketing' ? Role.CRC_OPERATOR :
+      Role.CLINIC_VIEWER;
+    const restricted: string[] = profile?.accessible_clinic_ids || [];
+    const email = authUser.email || profile?.email || '';
+    return {
+      id: authUser.id,
+      name: profile?.full_name || email.split('@')[0],
+      email,
+      role,
+      accessibleClinicIds: restricted.length > 0 ? restricted : allClinicIds,
+      avatar: profile?.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`
+    };
+  }, []);
+
   const login = async (email: string, password: string) => {
+    const sb = getSupabase();
+    if (sb) {
+      const { data, error } = await sb.auth.signInWithPassword({ email: email.trim(), password });
+      if (error || !data.user) {
+        throw new Error(error?.message === 'Invalid login credentials' ? 'E-mail ou senha incorretos' : (error?.message || 'Credenciais inválidas'));
+      }
+      const appUser = await buildUserFromSession(data.user);
+      setUser(appUser);
+      localStorage.setItem('user', JSON.stringify(appUser));
+      addToast('Login realizado com sucesso!', 'success');
+      return;
+    }
+
+    // Modo demonstração (sem Supabase configurado)
     return new Promise<void>((resolve, reject) => {
       setTimeout(() => {
         if (email && password) {
@@ -367,6 +425,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = useCallback(() => {
+    getSupabase()?.auth.signOut().catch(() => {});
     setUser(null);
     localStorage.removeItem('user');
     setActiveTabState('dashboard');
@@ -374,6 +433,50 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSubPageData(null);
     addToast('Sessão encerrada', 'info');
   }, [addToast]);
+
+  // Sessão: se o Supabase está ativo e não há sessão válida, o login salvo localmente não vale
+  useEffect(() => {
+    const sb = getSupabase();
+    if (!sb) return;
+    sb.auth.getSession().then(({ data }) => {
+      if (!data.session) {
+        setUser(null);
+        localStorage.removeItem('user');
+      }
+    });
+    const { data: sub } = sb.auth.onAuthStateChange(event => {
+      if (event === 'SIGNED_OUT') {
+        setUser(null);
+        localStorage.removeItem('user');
+      }
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  // Fonte da verdade = Supabase: carrega clínicas e leads depois do login
+  const syncFromSupabase = useCallback(async () => {
+    if (!isSupabaseConfigured()) return;
+    const [dbClinics, dbLeads] = await Promise.all([fetchClinicsFromDb(), loadLeadsFromDb()]);
+    if (dbClinics) {
+      setClinics(dbClinics);
+      localStorage.setItem('crm_clinics_list', JSON.stringify(dbClinics));
+      setCurrentClinicIdState(prev => (prev === 'all' || dbClinics.some(c => c.id === prev) ? prev : 'all'));
+    }
+    if (dbLeads) {
+      setLeads(dbLeads);
+      localStorage.setItem('crm_leads_data', JSON.stringify(dbLeads));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (user) syncFromSupabase();
+  }, [user?.id, syncFromSupabase]);
+
+  useEffect(() => {
+    const onLeadsUpdated = () => { if (user) loadLeadsFromDb().then(l => l && setLeads(l)); };
+    window.addEventListener('crm_leads_updated', onLeadsUpdated);
+    return () => window.removeEventListener('crm_leads_updated', onLeadsUpdated);
+  }, [user?.id]);
 
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
 

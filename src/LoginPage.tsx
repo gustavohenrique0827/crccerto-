@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { Target, Mail, Lock, Eye, EyeOff, LogIn, Loader2, ShieldCheck, ChevronRight } from 'lucide-react';
 import { useApp } from './context/AppContext';
 import { cn } from './lib/utils';
+import { isSupabaseConfigured } from './lib/supabase';
 
 export default function LoginPage() {
   const { login, addToast } = useApp();
@@ -21,8 +22,8 @@ export default function LoginPage() {
     setIsLoading(true);
     try {
       await login(email, password);
-    } catch (error) {
-      addToast('Erro ao realizar login. Verifique suas credenciais.', 'error');
+    } catch (error: any) {
+      addToast(error?.message || 'Erro ao realizar login. Verifique suas credenciais.', 'error');
     } finally {
       setIsLoading(false);
     }
@@ -65,8 +66,8 @@ export default function LoginPage() {
         {/* Auth Card */}
         <div className="bg-[var(--color-surface-elevated)] p-8 rounded-[var(--radius-panel-lg)] shadow-[var(--shadow-panel)] border border-[var(--color-border-default)]">
           <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Test Credentials Helper */}
-            <div className="bg-[var(--color-primary-blue)]/10 border border-[var(--color-primary-blue)]/25 p-4 rounded-[var(--radius-panel)] mb-2">
+            {/* Test Credentials Helper (só no modo demonstração, sem Supabase) */}
+            {!isSupabaseConfigured() && <div className="bg-[var(--color-primary-blue)]/10 border border-[var(--color-primary-blue)]/25 p-4 rounded-[var(--radius-panel)] mb-2">
               <div className="flex items-center gap-2 mb-1">
                 <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-primary-blue)]" />
                 <span className="text-[10px] font-bold text-[var(--color-primary-blue)] uppercase tracking-widest">Acesso de Teste</span>
@@ -75,7 +76,7 @@ export default function LoginPage() {
                 <span className="text-[var(--color-text-muted)] font-medium">Email: <span className="text-[var(--color-text-primary)] font-bold select-all">admin@crm.com</span></span>
                 <span className="text-[var(--color-text-muted)] font-medium">Senha: <span className="text-[var(--color-text-primary)] font-bold select-all">admin123</span></span>
               </div>
-            </div>
+            </div>}
 
             <div className="space-y-2">
               <label className="text-xs font-semibold text-[var(--color-text-muted)] block ml-0.5">Email de Acesso</label>

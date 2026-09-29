@@ -534,7 +534,7 @@ BEGIN
         NEW.id,
         COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', split_part(NEW.email, '@', 1)),
         NEW.email,
-        COALESCE((NEW.raw_user_meta_data->>'role')::user_role, 'admin'),
+        COALESCE((NEW.raw_user_meta_data->>'role')::public.user_role, 'admin'::public.user_role),
         NEW.raw_user_meta_data->>'avatar_url'
     )
     ON CONFLICT (id) DO UPDATE SET
@@ -542,7 +542,7 @@ BEGIN
         full_name = EXCLUDED.full_name;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
