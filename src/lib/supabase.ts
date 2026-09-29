@@ -470,6 +470,78 @@ export function useSupabaseLeads(clinicId?: string) {
 }
 
 // ---------------------------------------------------------------------
+// Conversas / histórico do lead (gravados pelo agente do n8n)
+// ---------------------------------------------------------------------
+
+export interface LeadTimelineItem {
+  id: string;
+  kind: 'client' | 'team' | 'event';
+  title: string;
+  text: string;
+  channel: string;
+  date: string;
+}
+
+const INTERACTION_LABEL: Record<string, string> = {
+  mensagem_cliente: 'Mensagem do paciente',
+  mensagem_responsavel: 'Resposta do atendimento',
+  message: 'Mensagem'
+};
+
+/** Junta lead_interactions (por lead_id) e interacoes (por telefone) em uma linha do tempo. */
+export async function fetchLeadTimelineFromDb(lead: Pick<Lead, 'id' | 'phone' | 'whatsapp'>): Promise<LeadTimelineItem[]> {
+  const sb = getSupabase();
+  if (!sb || !isUuid(lead.id)) return [];
+
+  const phones = new Set<string>();
+  [lead.phone, lead.whatsapp].forEach(raw => {
+    if (!raw) return;
+    const digits = raw.replace(/\D/g, '');
+    phones.add(raw);
+    if (digits) { phones.add(digits); phones.add(`+${digits}`); }
+  });
+
+  const [events, chat] = await Promise.all([
+    sb.from('lead_interactions').select('id,channel,message,interaction_type,created_at').eq('lead_id', lead.id),
+    phones.size > 0
+      ? sb.from('interacoes').select('id,telefone,direcao,texto,criado_em').in('telefone', Array.from(phones))
+      : Promise.resolve({ data: [] as any[], error: null })
+  ]);
+  if (events.error) console.error('Erro ao carregar lead_interactions:', events.error.message);
+  if (chat.error) console.error('Erro ao carregar interacoes:', chat.error.message);
+
+  const items: LeadTimelineItem[] = [];
+  (chat.data || []).forEach((r: any) => {
+    const fromClient = /cliente|inbound|paciente/i.test(r.direcao || '');
+    items.push({
+      id: `i_${r.id}`,
+      kind: fromClient ? 'client' : 'team',
+      title: fromClient ? 'Mensagem do paciente' : 'Resposta do atendimento',
+      text: r.texto || '',
+      channel: 'whatsapp',
+      date: r.criado_em
+    });
+  });
+  (events.data || []).forEach((r: any) => {
+    items.push({
+      id: `e_${r.id}`,
+      kind: /cliente/.test(r.interaction_type) ? 'client' : /responsavel/.test(r.interaction_type) ? 'team' : 'event',
+      title: INTERACTION_LABEL[r.interaction_type] || r.interaction_type || 'Interação',
+      text: r.message || '',
+      channel: r.channel || 'whatsapp',
+      date: r.created_at
+    });
+  });
+
+  // lead_interactions e interacoes registram a mesma conversa: só mostra o evento vazio
+  // quando não há texto real correspondente, e nunca duplica mensagem com texto.
+  const withText = items.filter(i => i.text.trim());
+  const emptyEvents = items.filter(i => !i.text.trim() && i.id.startsWith('e_'));
+  const hasChatText = withText.length > 0;
+  return [...withText, ...(hasChatText ? [] : emptyEvents)].sort((a, b) => +new Date(b.date) - +new Date(a.date));
+}
+
+// ---------------------------------------------------------------------
 // Agendamentos / métricas
 // ---------------------------------------------------------------------
 

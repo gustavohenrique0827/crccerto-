@@ -42,6 +42,7 @@ import {
 import { Lead } from '@/src/types';
 import { cn } from '@/src/lib/utils';
 import { useApp } from '@/src/context/AppContext';
+import { fetchLeadTimelineFromDb, LeadTimelineItem } from '@/src/lib/supabase';
 
 interface LeadDetailProps {
   isOpen: boolean;
@@ -52,6 +53,8 @@ interface LeadDetailProps {
 export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
   const { addToast, currentClinic } = useApp();
   const [activeTab, setActiveTab] = useState<'info' | 'history' | 'procedures' | 'docs' | 'tasks' | 'plan' | 'ai'>('info');
+  const [timeline, setTimeline] = useState<LeadTimelineItem[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [aiSummary, setAiSummary] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -111,6 +114,16 @@ export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
     const saved = localStorage.getItem(`lead_tasks_${lead?.id}`);
     return saved ? JSON.parse(saved) : [];
   });
+
+  useEffect(() => {
+    if (!isOpen || !lead || activeTab !== 'history') return;
+    let cancelled = false;
+    setTimelineLoading(true);
+    fetchLeadTimelineFromDb(lead)
+      .then(items => { if (!cancelled) setTimeline(items); })
+      .finally(() => { if (!cancelled) setTimelineLoading(false); });
+    return () => { cancelled = true; };
+  }, [isOpen, lead?.id, activeTab]);
 
   useEffect(() => {
     if (lead) {
@@ -539,26 +552,31 @@ export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
                           </div>
                         ))}
 
-                        {/* System History */}
-                        {[
-                          { title: 'Status Atualizado', desc: 'Alterado para Agendamento por Gustavo', date: 'Há 2 horas', icon: Clock, color: 'text-purple-600 bg-purple-50 dark:bg-purple-900/30' },
-                          { title: 'Ligação Realizada', desc: 'Paciente demonstrou interesse em implantes.', date: 'Hoje, 10:30', icon: Phone, color: 'text-blue-600 bg-blue-50 dark:bg-blue-900/30' },
-                          { title: 'Anotação Clínica', desc: 'Paciente relata dor no molar superior direito.', date: 'Ontem, 18:20', icon: Stethoscope, color: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30' },
-                          { title: 'Novo Lead Capturado', desc: 'Origem: Facebook Ads - Campanha Implante Verão', date: 'Ontem, 16:45', icon: TagIcon, color: 'text-orange-600 bg-orange-50 dark:bg-orange-900/30' },
-                        ].map((item, i) => (
-                          <div key={i} className="relative group">
+                        {/* Conversas e eventos reais (Supabase / agente n8n) */}
+                        {timelineLoading && timeline.length === 0 && (
+                          <p className="text-xs text-slate-400">Carregando histórico...</p>
+                        )}
+                        {!timelineLoading && timeline.length === 0 && (
+                          <p className="text-xs text-slate-400">Nenhuma conversa ou evento registrado para este lead ainda.</p>
+                        )}
+                        {timeline.map(item => (
+                          <div key={item.id} className="relative group">
                             <div className={cn(
                               "absolute -left-[45px] top-0 w-8 h-8 rounded-xl flex items-center justify-center border-4 border-white dark:border-slate-950 shadow-sm transition-transform group-hover:scale-110",
-                              item.color
+                              item.kind === 'client' ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30'
+                                : item.kind === 'team' ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/30'
+                                : 'text-purple-600 bg-purple-50 dark:bg-purple-900/30'
                             )}>
-                              <item.icon size={14} />
+                              {item.kind === 'event' ? <Clock size={14} /> : <MessageSquare size={14} />}
                             </div>
                             <div>
                               <div className="flex items-center justify-between mb-1">
                                 <h4 className="text-sm font-bold text-slate-800 dark:text-white tracking-tight">{item.title}</h4>
-                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{item.date}</span>
+                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                                  {new Date(item.date).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                </span>
                               </div>
-                              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">{item.desc}</p>
+                              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed whitespace-pre-wrap">{item.text || '(mensagem sem texto registrada)'}</p>
                             </div>
                           </div>
                         ))}
