@@ -825,7 +825,11 @@ const EMPTY_STATS = {
   yesterdayAttendance: 0,
   yesterdayClosings: 0,
   channelsPerformance: [] as any[],
-  channelHighlights: [] as any[]
+  channelHighlights: [] as any[],
+  funnel: { leads: 0, appointed: 0, attended: 0, sold: 0 },
+  pipelineValue: 0,
+  revenue: 0,
+  avgTicket: 0
 };
 
 export function useSupabaseDashboardStats(clinicId?: string, range?: string) {
@@ -862,7 +866,18 @@ export function useSupabaseDashboardStats(clinicId?: string, range?: string) {
         const on = (day: string, statuses: string[]) =>
           apts.filter(a => String(a.appointment_date || a.date || '').slice(0, 10) === day && statuses.includes(String(a.status))).length;
 
-        const sold = leads.filter(l => l.status === LeadStatus.SOLD).length;
+        const soldLeads = leads.filter(l => l.status === LeadStatus.SOLD);
+        const sold = soldLeads.length;
+        const revenue = soldLeads.reduce((acc, l) => acc + Number(l.estimatedValue || 0), 0);
+        const pipelineValue = leads
+          .filter(l => l.status !== LeadStatus.SOLD && l.status !== LeadStatus.DISQUALIFIED)
+          .reduce((acc, l) => acc + Number(l.estimatedValue || 0), 0);
+        const funnel = {
+          leads: leads.length,
+          appointed: leads.filter(l => APPOINTED.has(l.status)).length,
+          attended: leads.filter(l => ATTENDED.has(l.status)).length,
+          sold
+        };
 
         const byChannel: Record<string, any> = {};
         const byCampaign: Record<string, any> = {};
@@ -908,7 +923,11 @@ export function useSupabaseDashboardStats(clinicId?: string, range?: string) {
           yesterdayAttendance: on(yesterday, ['attended']),
           yesterdayClosings: sold,
           channelsPerformance: Object.values(byChannel).sort((a: any, b: any) => b.leads - a.leads),
-          channelHighlights: highlights
+          channelHighlights: highlights,
+          funnel,
+          pipelineValue,
+          revenue,
+          avgTicket: sold > 0 ? revenue / sold : 0
         });
         setHealth({
           integrationStatus: sb ? 'Conectado (Supabase)' : 'Modo local (sem Supabase)',

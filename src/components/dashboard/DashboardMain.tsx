@@ -118,39 +118,12 @@ export default function DashboardMain({ selectedClinicId }: DashboardMainProps) 
   }
 
   // Health / Main KPI Stats array for StatCellRow (grid 1/2/4)
+  const pctOfLeads = (n: number) => (stats.funnel.leads > 0 ? `${((n / stats.funnel.leads) * 100).toFixed(1)}% dos leads` : 'Sem leads no período');
   const healthStatItems: StatItem[] = [
-    {
-      id: 'kpi-leads',
-      label: 'CAPTAÇÃO DE LEADS',
-      value: stats.leads,
-      hint: '+18.5% no período selec.',
-      icon: <Users size={18} />,
-      tone: 'info'
-    },
-    {
-      id: 'kpi-appointments',
-      label: 'CONSULTAS AGENDADAS',
-      value: stats.appointments,
-      hint: '+12.0% em relação ao mês ant.',
-      icon: <Calendar size={18} />,
-      tone: 'neutral'
-    },
-    {
-      id: 'kpi-confirmations',
-      label: 'CONFIRMAÇÕES DE PRESENÇA',
-      value: stats.confirmations,
-      hint: stats.appointments > 0 ? `${Math.round((stats.confirmations / stats.appointments) * 100)}% de taxa de presença` : '92% de presença',
-      icon: <CheckCircle2 size={18} />,
-      tone: 'success'
-    },
-    {
-      id: 'kpi-followups',
-      label: 'RÉGUA DE FOLLOW-UPS',
-      value: stats.followups,
-      hint: `${stats.followups} interações pendentes`,
-      icon: <Activity size={18} />,
-      tone: 'warning'
-    }
+    { id: 'kpi-leads', label: 'LEADS', value: stats.funnel.leads, hint: 'Entradas no período', icon: <Users size={18} />, tone: 'info' },
+    { id: 'kpi-appointments', label: 'AGENDAMENTOS', value: stats.funnel.appointed, hint: pctOfLeads(stats.funnel.appointed), icon: <Calendar size={18} />, tone: 'neutral' },
+    { id: 'kpi-attended', label: 'COMPARECIMENTOS', value: stats.funnel.attended, hint: pctOfLeads(stats.funnel.attended), icon: <CheckCircle2 size={18} />, tone: 'success' },
+    { id: 'kpi-sales', label: 'VENDAS', value: stats.funnel.sold, hint: pctOfLeads(stats.funnel.sold), icon: <Activity size={18} />, tone: 'warning' }
   ];
 
   return (
@@ -185,6 +158,46 @@ export default function DashboardMain({ selectedClinicId }: DashboardMainProps) 
 
       {/* 2.5 LEMBRETES DE TAREFAS PERTO DO VENCIMENTO */}
       <TaskReminders />
+
+      {/* 2.6 FUNIL & RESULTADO */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Card className="lg:col-span-2 space-y-4">
+          <div>
+            <h2 className="text-xs font-black uppercase tracking-wider text-[var(--color-text-primary)]">Funil comercial</h2>
+            <p className="text-[11px] text-[var(--color-text-muted)]">Leads avançando por etapa no período</p>
+          </div>
+          <div className="space-y-3">
+            {[
+              { label: 'Leads', value: stats.funnel.leads, color: 'bg-[var(--color-primary-blue)]' },
+              { label: 'Agendamentos', value: stats.funnel.appointed, color: 'bg-indigo-500' },
+              { label: 'Comparecimentos', value: stats.funnel.attended, color: 'bg-emerald-500' },
+              { label: 'Vendas', value: stats.funnel.sold, color: 'bg-amber-500' }
+            ].map(step => (
+              <div key={step.label} className="space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-[var(--color-text-muted)]">{step.label}</span>
+                  <span className="font-black text-[var(--color-text-primary)]">{step.value}</span>
+                </div>
+                <div className="h-2 rounded-full bg-[var(--color-surface-sunken)] overflow-hidden">
+                  <div className={`h-full rounded-full ${step.color}`} style={{ width: `${stats.funnel.leads > 0 ? Math.max((step.value / stats.funnel.leads) * 100, step.value > 0 ? 2 : 0) : 0}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card className="space-y-3">
+          <div>
+            <h2 className="text-xs font-black uppercase tracking-wider text-[var(--color-text-primary)]">Resultado financeiro</h2>
+            <p className="text-[11px] text-[var(--color-text-muted)]">Baseado no valor estimado dos leads</p>
+          </div>
+          <dl className="divide-y divide-[var(--color-border-subtle)] text-xs">
+            <div className="flex items-center justify-between py-2"><dt className="text-[var(--color-text-muted)] font-bold">Em negociação</dt><dd className="font-black text-[var(--color-text-primary)]">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(stats.pipelineValue)}</dd></div>
+            <div className="flex items-center justify-between py-2"><dt className="text-[var(--color-text-muted)] font-bold">Vendido</dt><dd className="font-black text-[var(--color-success)]">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(stats.revenue)}</dd></div>
+            <div className="flex items-center justify-between py-2"><dt className="text-[var(--color-text-muted)] font-bold">Ticket médio</dt><dd className="font-black text-[var(--color-text-primary)]">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(stats.avgTicket)}</dd></div>
+          </dl>
+        </Card>
+      </div>
 
       {/* 3. VISÃO DO DIA & TAREFAS OPERACIONAIS */}
       <Card className="space-y-4">
@@ -380,137 +393,6 @@ export default function DashboardMain({ selectedClinicId }: DashboardMainProps) 
               </div>
             </Card>
           ))}
-        </div>
-      </div>
-
-      {/* 5. GRÁFICOS & INSIGHTS CARD */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
-          <ChannelConversionChart selectedClinicId={selectedClinicId} />
-
-          {/* Destaques dos Anúncios */}
-          <Card className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xs font-bold text-[var(--color-text-primary)] uppercase tracking-wider">
-                Desempenho por Anúncio e Campanha
-              </h2>
-              <Button variant="ghost" size="xs" onClick={handleChannelClick}>
-                <span>Ver Todos</span>
-                <ArrowRight size={13} />
-              </Button>
-            </div>
-
-            <div className="overflow-x-auto custom-scrollbar">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-[var(--color-surface-sunken)] border-b border-[var(--color-border-default)] text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-                    <th className="px-4 py-2.5 font-bold">Canal / Anúncio</th>
-                    <th className="px-4 py-2.5 text-center font-bold">Leads</th>
-                    <th className="px-4 py-2.5 text-center font-bold">Agendamentos</th>
-                    <th className="px-4 py-2.5 text-center font-bold">Presença</th>
-                    <th className="px-4 py-2.5 text-right font-bold">Participação %</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--color-border-subtle)]">
-                  {stats.channelHighlights && stats.channelHighlights.length > 0 ? (
-                    (stats.channelHighlights || []).map((item: any, idx: number) => (
-                      <tr 
-                        key={idx} 
-                        onClick={handleChannelClick}
-                        className="hover:bg-[var(--color-surface-sunken)]/60 transition-colors cursor-pointer group"
-                      >
-                        <td className="px-4 py-3 font-medium text-[var(--color-text-primary)]">
-                          <div className="flex items-center gap-2.5">
-                            <span className="w-2 h-2 rounded-full bg-[var(--color-primary-blue)] shrink-0" />
-                            <div>
-                              <p className="group-hover:text-[var(--color-primary-blue)] transition-colors font-bold flex items-center gap-2">
-                                {item.channel}
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-surface-sunken)] text-[var(--color-text-muted)] font-medium">
-                                  {item.tag}
-                                </span>
-                              </p>
-                              <p className="text-[11px] font-normal text-[var(--color-text-faint)]">{item.ad}</p>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-center font-medium tabular-nums text-[var(--color-text-primary)]">{item.leads}</td>
-                        <td className="px-4 py-3 text-center font-medium tabular-nums text-[var(--color-text-primary)]">{item.appointments}</td>
-                        <td className="px-4 py-3 text-center font-bold tabular-nums text-[var(--color-success)]">{item.attendance}</td>
-                        <td className="px-4 py-3 text-right font-black tabular-nums text-[var(--color-primary-blue)]">{item.percentage}</td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={5} className="py-6 text-center text-[var(--color-text-faint)] font-medium">
-                        Nenhum anúncio ou campanha registrada no período selecionado.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </div>
-
-        {/* Insight Card Theme-Aware */}
-        <div className="space-y-6">
-          <Card className="bg-[var(--color-surface-sunken)] border-[var(--color-border-default)] space-y-4">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 rounded-[var(--radius-control)] bg-[var(--color-primary-blue)]/10 text-[var(--color-primary-blue)] border border-[var(--color-primary-blue)]/20 shrink-0">
-                <Sparkles size={18} />
-              </div>
-              <h3 className="text-xs font-bold tracking-wide uppercase text-[var(--color-text-primary)]">
-                Análise de Desempenho
-              </h3>
-            </div>
-            
-            <p className="text-xs text-[var(--color-text-muted)] leading-relaxed font-normal">
-              {isConsolidated 
-                ? 'Sua rede apresenta acompanhamento contínuo de conversão. O tempo médio de resposta aos leads captados via Meta e Google Ads influencia diretamente na taxa de agendamento.'
-                : `Unidade ${currentClinicObj?.name}: ${health.summaryText} ${health.recommendation}`
-              }
-            </p>
-
-            <div className="pt-2">
-              <Button 
-                onClick={handleChannelClick}
-                className="w-full"
-              >
-                <span>Ver Relatório de Tráfego</span>
-                <ArrowRight size={14} />
-              </Button>
-            </div>
-          </Card>
-
-          {/* Volume Semanal */}
-          <Card className="space-y-4">
-            <h3 className="text-xs font-bold text-[var(--color-text-primary)] uppercase tracking-wider">
-              Volume Semanal
-            </h3>
-            <div className="h-[220px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={[
-                    { day: 'Seg', agendamentos: Math.round(stats.appointments * 0.18), comparecimentos: Math.round(stats.confirmations * 0.16) },
-                    { day: 'Ter', agendamentos: Math.round(stats.appointments * 0.22), comparecimentos: Math.round(stats.confirmations * 0.20) },
-                    { day: 'Qua', agendamentos: Math.round(stats.appointments * 0.20), comparecimentos: Math.round(stats.confirmations * 0.18) },
-                    { day: 'Qui', agendamentos: Math.round(stats.appointments * 0.25), comparecimentos: Math.round(stats.confirmations * 0.24) },
-                    { day: 'Sex', agendamentos: Math.round(stats.appointments * 0.15), comparecimentos: Math.round(stats.confirmations * 0.14) },
-                    { day: 'Sáb', agendamentos: 0, comparecimentos: 0 },
-                  ]}
-                  margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border-default)" />
-                  <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 11, fontWeight: 500, fill: 'var(--color-text-muted)' }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: 'var(--color-text-muted)' }} />
-                  <Tooltip contentStyle={{ backgroundColor: 'var(--color-surface-elevated)', borderRadius: '8px', border: '1px solid var(--color-border-default)', fontSize: '12px', color: 'var(--color-text-primary)' }} />
-                  <Legend iconType="circle" wrapperStyle={{ paddingTop: '8px', fontSize: '11px', color: 'var(--color-text-muted)' }} />
-                  <Bar dataKey="agendamentos" name="Agendamentos" fill="var(--color-primary-blue)" radius={[4, 4, 0, 0]} barSize={12} />
-                  <Bar dataKey="comparecimentos" name="Comparecimentos" fill="var(--color-success)" radius={[4, 4, 0, 0]} barSize={12} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </Card>
         </div>
       </div>
 

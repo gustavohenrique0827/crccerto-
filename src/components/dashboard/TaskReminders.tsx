@@ -73,7 +73,7 @@ export default function TaskReminders() {
               ))}
             </div>
           )}
-          <button onClick={() => setActiveTab('tasks')} className="text-[11px] font-bold text-[var(--color-primary-blue)] hover:underline flex items-center gap-0.5 cursor-pointer">
+          <button onClick={() => setActiveTab('tarefas')} className="text-[11px] font-bold text-[var(--color-primary-blue)] hover:underline flex items-center gap-0.5 cursor-pointer">
             Ver todas <ChevronRight size={12} />
           </button>
         </div>
@@ -87,7 +87,7 @@ export default function TaskReminders() {
       ) : (
         <ul className="divide-y divide-[var(--color-border-subtle)]">
           {due.slice(0, 6).map(({ task, state }) => (
-            <li key={task.id} onClick={() => setActiveTab('tasks')} className="py-2 flex items-center justify-between gap-3 cursor-pointer hover:bg-[var(--color-surface-sunken)]/50 px-1 rounded">
+            <li key={task.id} onClick={() => setActiveTab('tarefas')} className="py-2 flex items-center justify-between gap-3 cursor-pointer hover:bg-[var(--color-surface-sunken)]/50 px-1 rounded">
               <div className="min-w-0">
                 <p className="text-xs font-bold text-[var(--color-text-primary)] truncate">{task.title}</p>
                 <p className="text-[10px] text-[var(--color-text-faint)] truncate">

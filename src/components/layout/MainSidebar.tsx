@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { 
   LayoutDashboard, 
   Target, 
@@ -12,8 +12,6 @@ import {
   Users, 
   Link2, 
   Settings, 
-  ChevronDown, 
-  X,
   Boxes
 } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
@@ -44,22 +42,6 @@ export function MainSidebar({
     user
   } = useApp();
 
-  // Collapsible section state: starts ALL OPEN by default for clean overview
-  const [openSections, setOpenSections] = useState<Record<string, boolean>>({
-    overview: true,
-    sales: true,
-    operations: true,
-    bi: true,
-    admin: true
-  });
-
-  const toggleSection = (sectionId: string) => {
-    setOpenSections(prev => ({
-      ...prev,
-      [sectionId]: !prev[sectionId]
-    }));
-  };
-
   const isModuleEnabled = (moduleId: string) => {
     if (isAllClinicsView || user?.role === Role.SUPER_ADMIN) return true;
     const enabledList: string[] = currentClinic?.enabledModules || [];
@@ -89,58 +71,59 @@ export function MainSidebar({
 
   const isCeopUser = !isAllClinicsView && user?.role !== Role.SUPER_ADMIN && (user?.role === Role.CEOP_OPERATOR || user?.role === Role.CEOP || user?.role === Role.CRC_OPERATOR);
 
-  const sections = [
+  // Áreas: uma coluna de ícones + painel só com os itens da área aberta
+  const areas = [
+    { id: 'inicio', label: 'Início', icon: LayoutDashboard, items: [{ id: 'dashboard', label: 'Visão geral', icon: LayoutDashboard }] },
     {
-      id: 'overview',
-      title: 'VISÃO GERAL',
+      id: 'comercial', label: 'Comercial', icon: Target,
       items: [
-        { id: 'dashboard', label: 'Dashboard Operacional', icon: LayoutDashboard }
+        { id: 'leads', label: 'Pipeline', icon: Target },
+        { id: 'pacientes', label: 'Pacientes', icon: UserCircle },
+        { id: 'followups', label: 'Follow-ups', icon: Activity }
       ]
     },
     {
-      id: 'sales',
-      title: 'VENDAS & CRM',
+      id: 'agenda', label: 'Agenda', icon: Calendar,
       items: [
-        { id: 'leads', label: 'Funil de CRM / Pipeline', icon: Target },
-        { id: 'pacientes', label: 'Gestão de Pacientes', icon: UserCircle }
+        { id: 'agenda', label: 'Agenda', icon: Calendar },
+        { id: 'tarefas', label: 'Tarefas', icon: CheckSquare }
       ]
     },
     {
-      id: 'operations',
-      title: 'AGENDA & OPERAÇÕES',
+      id: 'analises', label: 'Análises', icon: BarChart3,
       items: [
-        { id: 'agenda', label: 'Agenda & Reuniões', icon: Calendar },
-        { id: 'followups', label: 'Régua de Follow-ups', icon: Activity },
-        { id: 'tarefas', label: 'Workspace de Tarefas', icon: CheckSquare }
+        { id: 'analise-dados', label: 'Análise de dados', icon: BarChart3 },
+        { id: 'relatorios', label: 'Relatórios', icon: BarChart3 }
       ]
     },
     {
-      id: 'bi',
-      title: 'INTEL IÂNCIA & BI',
+      id: 'admin', label: 'Administração', icon: Settings,
       items: [
-        { id: 'analise-dados', label: 'Análise de Dados', icon: BarChart3 },
-        { id: 'relatorios', label: 'Relatórios Gerenciais', icon: BarChart3 },
-        { id: 'guia', label: 'Guia do Sistema', icon: BookOpen }
-      ]
-    },
-    {
-      id: 'admin',
-      title: 'ADMINISTRAÇÃO',
-      items: [
-        { id: 'clinicas', label: 'Unidades & Filiais', icon: Building2 },
-        { id: 'equipe', label: 'Gestão de Equipe', icon: Users },
-        { id: 'integracoes', label: 'Integrações & APIs', icon: Link2 },
-        { id: 'configuracoes', label: 'Configurações Central', icon: Settings }
+        { id: 'clinicas', label: 'Clínicas', icon: Building2 },
+        { id: 'equipe', label: 'Equipe', icon: Users },
+        { id: 'integracoes', label: 'Integrações', icon: Link2 },
+        { id: 'configuracoes', label: 'Configurações', icon: Settings }
       ]
     }
-  ].map(section => ({
-    ...section,
-    items: section.items.filter(item => {
+  ].map(area => ({
+    ...area,
+    items: area.items.filter(item => {
       if (!isModuleEnabled(item.id)) return false;
       if (isCeopUser && ['clinicas', 'equipe', 'integracoes', 'configuracoes'].includes(item.id)) return false;
       return true;
     })
-  })).filter(section => section.items.length > 0);
+  })).filter(area => area.items.length > 0);
+
+  // 'settings', 'analytics' e 'manual' são apelidos de abas que já existem no App
+  const tabAlias: Record<string, string> = { settings: 'configuracoes', analytics: 'relatorios', manual: 'guia' };
+  const currentTab = tabAlias[activeTab] || activeTab;
+  const activeArea = areas.find(a => a.items.some(i => i.id === currentTab)) || areas[0];
+  const panelArea = currentTab === 'guia' ? null : activeArea;
+
+  const goTo = (tabId: string) => {
+    setActiveTab(tabId);
+    setIsMobileOpen(false);
+  };
 
   return (
     <>
@@ -152,121 +135,113 @@ export function MainSidebar({
         />
       )}
 
-      {/* Main Sidebar Aside */}
       <aside
         className={cn(
-          "border-r border-[var(--color-border-default)] bg-[var(--color-surface)] flex flex-col select-none transition-all duration-300 z-50 shrink-0",
+          "flex select-none transition-all duration-300 z-50 shrink-0 bg-[var(--color-surface)] border-r border-[var(--color-border-default)]",
           "fixed lg:relative inset-y-0 left-0 h-screen",
-          isCollapsed ? "w-20" : "w-68",
-          isMobileOpen ? "translate-x-0 w-68" : "-translate-x-full lg:translate-x-0"
+          isMobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         )}
       >
-        {/* Top Header (h-20, subtle border) + IDENTITY SLOT */}
-        <div className="h-20 px-4 border-b border-[var(--color-border-subtle)] flex flex-col justify-center shrink-0">
-          
-          {/* Vacant Configurable Identity Slot */}
-          <div className="slot-identity w-full">
-            <div className="w-8 h-8 rounded-[var(--radius-control)] bg-[var(--color-primary-blue)] flex items-center justify-center text-white shrink-0">
-              <Boxes size={18} />
-            </div>
+        {/* Coluna de ícones (áreas) */}
+        <div className="w-14 flex flex-col items-center py-3 gap-1 border-r border-[var(--color-border-subtle)] bg-[var(--color-surface-sunken)]/40">
+          <button
+            type="button"
+            title="Início"
+            onClick={() => goTo('dashboard')}
+            className="w-9 h-9 mb-2 rounded-[var(--radius-control)] bg-[var(--color-primary-blue)] flex items-center justify-center text-white shadow-sm cursor-pointer"
+          >
+            <Boxes size={18} />
+          </button>
 
-            {!isCollapsed && (
-              <div className="min-w-0 flex-1">
-                <p className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] leading-none">
-                  SLOT DE IDENTIDADE
-                </p>
-                <p className="text-xs font-black tracking-tight text-[var(--color-text-primary)] truncate mt-0.5">
-                  Painel Multimódulo
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Unit / Clinic Selector below Identity Slot */}
-          {!isCollapsed && (
-            <div className="mt-1 flex items-center gap-1.5 px-2 py-1 rounded-[var(--radius-control)] hover:bg-[var(--color-surface-sunken)] transition-colors cursor-pointer">
-              <Building2 size={13} className="text-[var(--color-primary-blue)] shrink-0" />
-              <select
-                value={currentClinicId}
-                onChange={(e) => setCurrentClinicId(e.target.value)}
-                className="w-full bg-transparent text-xs font-bold text-[var(--color-text-primary)] outline-none cursor-pointer border-none"
-              >
-                <option value="all">Rede Geral Consolidada</option>
-                {clinics.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-        </div>
-
-        {/* Sidebar Body: Sections list */}
-        <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-5 custom-scrollbar">
-          {sections.map((sec) => {
-            const isOpen = Boolean(openSections[sec.id]);
-
+          {areas.map(area => {
+            const Icon = area.icon;
+            const isActive = panelArea?.id === area.id;
             return (
-              <div key={sec.id} className="space-y-1">
-                {/* Section Header */}
-                {!isCollapsed ? (
-                  <button
-                    type="button"
-                    onClick={() => toggleSection(sec.id)}
-                    className="w-full flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-[var(--color-text-faint)] px-2 py-1 hover:text-[var(--color-text-primary)] transition-colors cursor-pointer"
-                  >
-                    <span>{sec.title}</span>
-                    <ChevronDown
-                      size={12}
-                      className={cn(
-                        "transition-transform duration-200 shrink-0",
-                        !isOpen && "-rotate-90"
-                      )}
-                    />
-                  </button>
-                ) : (
-                  <div className="h-2" />
+              <button
+                key={area.id}
+                type="button"
+                title={area.label}
+                onClick={() => goTo(isActive ? currentTab : area.items[0].id)}
+                className={cn(
+                  "w-9 h-9 rounded-[var(--radius-control)] flex items-center justify-center transition-colors cursor-pointer",
+                  isActive
+                    ? "bg-[var(--color-primary-blue)]/12 text-[var(--color-primary-blue)]"
+                    : "text-[var(--color-text-faint)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text-primary)]"
                 )}
-
-                {/* Section Items */}
-                {(isOpen || isCollapsed) && (
-                  <div className="space-y-1">
-                    {sec.items.map((item) => {
-                      const isActive = activeTab === item.id;
-                      const Icon = item.icon;
-
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          title={isCollapsed ? item.label : undefined}
-                          onClick={() => {
-                            setActiveTab(item.id);
-                            setIsMobileOpen(false);
-                          }}
-                          className={cn(
-                            "w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold rounded-[var(--radius-control)] transition-all cursor-pointer text-left",
-                            isActive
-                              ? "bg-[var(--color-primary-blue)] !text-white shadow-md shadow-[var(--color-primary-blue)]/25"
-                              : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text-primary)]",
-                            isCollapsed && "justify-center px-0"
-                          )}
-                        >
-                          <Icon
-                            className={cn(
-                              "w-4 h-4 shrink-0",
-                              isActive ? "!text-white" : "text-[var(--color-text-faint)]"
-                            )}
-                          />
-                          {!isCollapsed && <span className="truncate">{item.label}</span>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+              >
+                <Icon size={18} />
+              </button>
             );
           })}
-        </nav>
+
+          <div className="flex-1" />
+
+          <button
+            type="button"
+            title="Guia do Sistema"
+            onClick={() => goTo('guia')}
+            className={cn(
+              "w-9 h-9 rounded-[var(--radius-control)] flex items-center justify-center transition-colors cursor-pointer",
+              currentTab === 'guia'
+                ? "bg-[var(--color-primary-blue)]/12 text-[var(--color-primary-blue)]"
+                : "text-[var(--color-text-faint)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text-primary)]"
+            )}
+          >
+            <BookOpen size={18} />
+          </button>
+        </div>
+
+        {/* Painel contextual da área */}
+        {!isCollapsed && (
+          <div className="w-52 flex flex-col">
+            {/* Seletor de clínica (único ponto para trocar de unidade) */}
+            <div className="p-3 border-b border-[var(--color-border-subtle)]">
+              <div className="flex items-center gap-2 px-2.5 py-2 rounded-[var(--radius-control)] border border-[var(--color-border-default)] bg-[var(--color-surface-elevated)]">
+                <Building2 size={15} className="text-[var(--color-primary-blue)] shrink-0" />
+                <select
+                  value={currentClinicId}
+                  onChange={(e) => setCurrentClinicId(e.target.value)}
+                  className="w-full bg-transparent text-xs font-bold text-[var(--color-text-primary)] outline-none cursor-pointer border-none truncate"
+                >
+                  <option value="all">Rede consolidada</option>
+                  {clinics.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <nav className="flex-1 overflow-y-auto p-3 space-y-1 custom-scrollbar">
+              {panelArea && (
+                <>
+                  <p className="px-2 pb-1 text-[10px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">
+                    {panelArea.label}
+                  </p>
+                  {panelArea.items.map(item => {
+                    const isActive = currentTab === item.id;
+                    const Icon = item.icon;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => goTo(item.id)}
+                        className={cn(
+                          "w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold rounded-[var(--radius-control)] transition-colors cursor-pointer text-left",
+                          isActive
+                            ? "bg-[var(--color-primary-blue)]/12 text-[var(--color-primary-blue)]"
+                            : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text-primary)]"
+                        )}
+                      >
+                        <Icon className="w-4 h-4 shrink-0" />
+                        <span className="truncate">{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </>
+              )}
+            </nav>
+          </div>
+        )}
       </aside>
     </>
   );

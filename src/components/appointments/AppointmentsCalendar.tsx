@@ -49,7 +49,7 @@ import {
   SyncQueueItem 
 } from '../../lib/syncQueue';
 import { createCalendarEvent, performBidirectionalSync } from '../../lib/googleCalendar';
-import { isSupabaseConfigured, fetchAppointmentsFromDb, saveAppointmentsToDb } from '../../lib/supabase';
+import { isSupabaseConfigured, fetchAppointmentsFromDb, saveAppointmentsToDb, fetchProfessionalsFromDb } from '../../lib/supabase';
 import { buildGoogleEventFromAppointment, getCalendarFieldMapping } from '../../lib/googleCalendarMapping';
 import { getGoogleSyncSettings, recordSyncExecution } from '../../lib/googleSyncSettings';
 
@@ -747,9 +747,19 @@ export default function AppointmentsCalendar() {
     return count;
   }, [conflictMap]);
 
+  // Profissionais cadastrados na(s) clínica(s) + quem já aparece em agendamentos
+  const [dbProfessionalNames, setDbProfessionalNames] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchProfessionalsFromDb(effectiveClinicId).then(list => {
+      if (!cancelled) setDbProfessionalNames(list.map(p => p.name));
+    });
+    return () => { cancelled = true; };
+  }, [effectiveClinicId]);
+
   const professionals = useMemo(() => {
-    return ['Todos', ...new Set((clinicAppointments || []).map(a => a.professional).filter(Boolean))];
-  }, [clinicAppointments]);
+    return ['Todos', ...new Set([...dbProfessionalNames, ...(clinicAppointments || []).map(a => a.professional).filter(Boolean)])];
+  }, [clinicAppointments, dbProfessionalNames]);
 
   const handleExport = () => {
     exportToCSV(filteredAppointments, 'agendamentos_agenda');
@@ -827,38 +837,6 @@ export default function AppointmentsCalendar() {
           >
             Hoje
           </button>
-
-          {/* Admin Clinic Filter (Exclusive to Administrators) */}
-          {isAdmin ? (
-            <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800 px-2.5 py-1.5 rounded-xl border border-blue-200 dark:border-blue-900/60 shadow-2xs">
-              <Building2 size={13} className="text-blue-600 dark:text-blue-400 shrink-0" />
-              <span className="text-[9px] font-black uppercase tracking-wider text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-950/80 px-1 py-0.5 rounded border border-blue-200 dark:border-blue-800 shrink-0">
-                Admin
-              </span>
-              <select
-                value={currentClinicId}
-                onChange={(e) => setCurrentClinicId(e.target.value)}
-                className="bg-transparent text-xs font-bold text-slate-800 dark:text-slate-200 outline-none cursor-pointer pr-1"
-                title="Filtrar eventos por clínica (Exclusivo Administrador)"
-              >
-                <option value="all" className="bg-white dark:bg-slate-800 text-slate-900 dark:text-white">
-                  Todas as Clínicas
-                </option>
-                {(clinics || []).map(clinic => (
-                  <option key={clinic.id} value={clinic.id} className="bg-white dark:bg-slate-800 text-slate-900 dark:text-white">
-                    {clinic.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : (
-            <div className="hidden sm:flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800/60 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs shadow-2xs" title="Sua clínica ativa">
-              <Building2 size={13} className="text-slate-400 shrink-0" />
-              <span className="text-xs font-bold text-slate-700 dark:text-slate-300 truncate max-w-[140px]">
-                {currentClinic?.name || 'Unidade Padrão'}
-              </span>
-            </div>
-          )}
 
           {/* Date Range Navigation */}
           <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-800/80 px-2 py-1 rounded-xl border border-slate-200 dark:border-slate-700">
@@ -1223,64 +1201,6 @@ export default function AppointmentsCalendar() {
               })}
             </div>
           </div>
-
-          {/* Clinic Filter Section (Admin Only switch, Non-admin read-only) */}
-          {isAdmin ? (
-            <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
-                  <Building2 size={13} className="text-blue-500" />
-                  Clínica
-                </h3>
-                <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
-                  Admin
-                </span>
-              </div>
-              <div className="space-y-1.5">
-                <button
-                  onClick={() => setCurrentClinicId('all')}
-                  className={cn(
-                    "w-full text-left px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-between",
-                    isAllClinicsView
-                      ? "bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
-                      : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                  )}
-                >
-                  <span className="truncate">Todas as Clínicas</span>
-                  {isAllClinicsView && <div className="w-1.5 h-1.5 rounded-full bg-blue-600" />}
-                </button>
-                {(clinics || []).map(clinic => (
-                  <button
-                    key={clinic.id}
-                    onClick={() => setCurrentClinicId(clinic.id)}
-                    className={cn(
-                      "w-full text-left px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-between",
-                      !isAllClinicsView && currentClinicId === clinic.id
-                        ? "bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
-                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                    )}
-                  >
-                    <span className="truncate">{clinic.name}</span>
-                    {!isAllClinicsView && currentClinicId === clinic.id && (
-                      <div className="w-1.5 h-1.5 rounded-full bg-blue-600" />
-                    )}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="bg-white dark:bg-slate-900 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
-                <Building2 size={16} />
-              </div>
-              <div className="overflow-hidden">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Unidade Vinculada</p>
-                <p className="text-xs font-bold text-slate-800 dark:text-white truncate">
-                  {currentClinic?.name || 'Unidade Padrão'}
-                </p>
-              </div>
-            </div>
-          )}
 
           {/* Professionals Filter */}
           <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">

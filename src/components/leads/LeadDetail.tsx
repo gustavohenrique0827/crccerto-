@@ -119,7 +119,7 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
       localStorage.setItem('crm_schedule_prefill', JSON.stringify({ leadId: lead.id, name: lead.name, phone: lead.whatsapp || lead.phone, clinicId: lead.clinicId, procedure: lead.procedureType || '' }));
     } catch {}
     onClose();
-    navigateTo('appointments');
+    navigateTo('agenda');
   };
   const [activeTab, setActiveTab] = useState<'info' | 'history' | 'procedures' | 'docs' | 'tasks' | 'plan' | 'ai'>('info');
   const [timeline, setTimeline] = useState<LeadTimelineItem[]>([]);
@@ -403,7 +403,7 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50"
+            className="fixed inset-0 bg-slate-950/70 backdrop-blur-md z-50"
           />
           <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 pointer-events-none">
           <motion.div
@@ -411,7 +411,7 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 16 }}
             transition={{ type: 'spring', damping: 26, stiffness: 260 }}
-            className="pointer-events-auto w-full max-w-2xl max-h-[90vh] bg-white dark:bg-slate-950 shadow-2xl rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col"
+            className="pointer-events-auto w-full max-w-2xl max-h-[90vh] bg-white dark:bg-slate-950 shadow-2xl rounded-3xl border border-slate-200/80 dark:border-slate-800 overflow-hidden flex flex-col"
           >
             {/* Header */}
             <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50 relative overflow-hidden">
