@@ -293,9 +293,6 @@ export function Topbar({
               <p className="text-xs font-bold text-[var(--color-text-primary)] truncate max-w-[140px]">
                 {user?.name || 'Operador'}
               </p>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-primary-blue)] truncate max-w-[140px]">
-                {isAllClinicsView ? 'Rede Consolidada' : (currentClinic?.name || 'Cliente')}
-              </p>
             </div>
           </button>
 

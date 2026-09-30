@@ -19,6 +19,8 @@ import {
   DndContext, 
   DragOverlay, 
   closestCorners, 
+  pointerWithin,
+  CollisionDetection,
   KeyboardSensor, 
   PointerSensor, 
   useSensor, 
@@ -146,6 +148,21 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
     })
   );
 
+  // Arrastar card: ignora as colunas "sortable" (stage-x) e usa a posição do ponteiro,
+  // assim o card cai na coluna/card que está sob o mouse. Arrastar coluna segue usando cantos.
+  const collisionDetection: CollisionDetection = (args) => {
+    const draggingStage = String(args.active.id).startsWith('stage-');
+    if (draggingStage) {
+      return closestCorners({
+        ...args,
+        droppableContainers: args.droppableContainers.filter(c => String(c.id).startsWith('stage-'))
+      });
+    }
+    const cardTargets = args.droppableContainers.filter(c => !String(c.id).startsWith('stage-'));
+    const hits = pointerWithin({ ...args, droppableContainers: cardTargets });
+    return hits.length > 0 ? hits : closestCorners({ ...args, droppableContainers: cardTargets });
+  };
+
   const effectiveSearch = localSearch || globalSearchTerm;
   
   const filteredLeads = leads.filter(lead => {
@@ -259,8 +276,14 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
     const leadId = activeIdStr;
     const overId = overIdStr;
 
-    if (Object.values(LeadStatus).includes(overId as LeadStatus)) {
-      updateLeadStatus(leadId, overId as LeadStatus);
+    const overStatus = overId.replace(/^stage-/, '') as LeadStatus;
+    if (Object.values(LeadStatus).includes(overStatus)) {
+      const current = leads.find(l => l.id === leadId);
+      if (current && current.status !== overStatus) {
+        updateLeadStatus(leadId, overStatus);
+        const stageName = STAGES.find(st => st.id === overStatus)?.label || overStatus;
+        addToast(`Lead movido para "${stageName}"`, 'success');
+      }
       return;
     }
 
@@ -269,6 +292,8 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
 
     if (activeLead && overLead && activeLead.status !== overLead.status) {
       updateLeadStatus(leadId, overLead.status);
+      const stageName = STAGES.find(st => st.id === overLead.status)?.label || overLead.status;
+      addToast(`Lead movido para "${stageName}"`, 'success');
     }
   };
 
@@ -523,7 +548,7 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
         ) : (
           <DndContext
             sensors={sensors}
-            collisionDetection={closestCorners}
+            collisionDetection={collisionDetection}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
           >

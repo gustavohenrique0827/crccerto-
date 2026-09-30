@@ -126,6 +126,10 @@ export function rowToLead(row: any): DbLead {
     priority: row.priority || 'medium',
     procedureType: row.procedure_interest || undefined,
     notes: row.notes || '',
+    cpf: row.cpf || undefined,
+    birthDate: row.birth_date || undefined,
+    cep: row.cep || undefined,
+    address: row.address || undefined,
     tags: row.tags || [],
     lastInteractionAt: row.updated_at || row.created_at,
     createdAt: row.created_at
@@ -152,6 +156,10 @@ function leadToRow(lead: Partial<DbLead>): Record<string, any> {
   if (lead.responsibleName !== undefined) row.responsible_name = lead.responsibleName || null;
   if (lead.notes !== undefined) row.notes = lead.notes || null;
   if (lead.tags !== undefined) row.tags = lead.tags;
+  if (lead.cpf !== undefined) row.cpf = lead.cpf || null;
+  if (lead.birthDate !== undefined) row.birth_date = lead.birthDate || null;
+  if (lead.cep !== undefined) row.cep = lead.cep || null;
+  if (lead.address !== undefined) row.address = lead.address || null;
   return row;
 }
 
@@ -310,6 +318,16 @@ const writeLocalLeads = (leads: Lead[]) => {
   } catch {}
 };
 
+// Colunas que só existem depois da migration 20260930_lead_profile_fields.sql
+const EXTRA_LEAD_COLUMNS = ['cpf', 'birth_date', 'cep', 'address'];
+const isMissingColumn = (error: any) =>
+  error && (error.code === 'PGRST204' || /column .* (does not exist|of relation)|schema cache/i.test(error.message || ''));
+const withoutExtraColumns = (row: Record<string, any>) => {
+  const copy = { ...row };
+  EXTRA_LEAD_COLUMNS.forEach(c => delete copy[c]);
+  return copy;
+};
+
 /** null = Supabase não configurado ou com erro. Lista vazia é um resultado válido. */
 export async function loadLeadsFromDb(clinicId?: string): Promise<DbLead[] | null> {
   const sb = getSupabase();
@@ -336,9 +354,31 @@ export async function updateLeadInDb(id: string, updates: Partial<DbLead>): Prom
   if (!sb) return true;
   const row = leadToRow({ ...updates, id: undefined });
   if (Object.keys(row).length === 0) return true;
-  const { error } = await sb.from('leads').update(row).eq('id', id);
+  let { error } = await sb.from('leads').update(row).eq('id', id);
+  if (isMissingColumn(error)) {
+    console.warn('Colunas cpf/nascimento/cep/endereço ainda não existem no banco; salvando o restante. Rode a migration 20260930.');
+    const basic = withoutExtraColumns(row);
+    if (Object.keys(basic).length === 0) return true;
+    ({ error } = await sb.from('leads').update(basic).eq('id', id));
+  }
   if (error) console.error('Erro ao atualizar lead no Supabase:', error.message);
   return !error;
+}
+
+/** Atualiza banco + cache local + avisa a UI. Usado pela ficha do lead. */
+export async function updateLeadEverywhere(id: string, updates: Partial<DbLead>): Promise<boolean> {
+  const ok = await updateLeadInDb(id, updates);
+  if (!ok) return false;
+  try {
+    writeLocalLeads(readLocalLeads().map(l => (l.id === id ? { ...l, ...updates } : l)));
+    window.dispatchEvent(new CustomEvent('crm_leads_updated'));
+  } catch {}
+  if (!isSupabaseConfigured()) {
+    try {
+      fetch(`/api/leads/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates) }).catch(() => {});
+    } catch {}
+  }
+  return true;
 }
 
 export async function deleteLeadFromDb(id: string): Promise<boolean> {
@@ -380,7 +420,11 @@ export async function saveLeadToDb(lead: DbLead): Promise<boolean> {
     console.error('Lead com id inválido para o Supabase:', lead.id);
     return false;
   }
-  const { error } = await sb.from('leads').upsert([leadToRow(lead)]);
+  const row = leadToRow(lead);
+  let { error } = await sb.from('leads').upsert([row]);
+  if (isMissingColumn(error)) {
+    ({ error } = await sb.from('leads').upsert([withoutExtraColumns(row)]));
+  }
   if (error) console.error('Erro ao salvar lead no Supabase:', error.message);
   return !error;
 }
@@ -571,6 +615,120 @@ export async function fetchLeadTimelineFromDb(lead: Pick<Lead, 'id' | 'phone' | 
   const emptyEvents = items.filter(i => !i.text.trim() && i.id.startsWith('e_'));
   const hasChatText = withText.length > 0;
   return [...withText, ...(hasChatText ? [] : emptyEvents)].sort((a, b) => +new Date(b.date) - +new Date(a.date));
+}
+
+// ---------------------------------------------------------------------
+// Agenda: agendamentos e profissionais
+// ---------------------------------------------------------------------
+
+const APT_STATUS_FROM_DB: Record<string, string> = {
+  pending: 'pending', confirmed: 'confirmed', attended: 'completed',
+  missed: 'missed', cancelled: 'cancelled', rescheduled: 'pending'
+};
+const APT_STATUS_TO_DB: Record<string, string> = {
+  pending: 'pending', confirmed: 'confirmed', in_progress: 'confirmed',
+  completed: 'attended', missed: 'missed', cancelled: 'cancelled'
+};
+
+const addMinutes = (hhmm: string, minutes: number) => {
+  const [h, m] = hhmm.split(':').map(Number);
+  const total = ((h * 60 + m + minutes) % 1440 + 1440) % 1440;
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+};
+
+export function rowToAppointment(r: any) {
+  return {
+    id: r.id,
+    patient: r.patient_name || '',
+    phone: r.patient_phone || '',
+    date: String(r.appointment_date || '').slice(0, 10),
+    time: String(r.start_time || '').slice(0, 5),
+    duration: r.duration_minutes || 45,
+    procedure: r.procedure_name || 'Consulta',
+    status: (APT_STATUS_FROM_DB[r.status] || 'pending') as any,
+    clinicId: r.clinic_id,
+    clinicName: r.clinic_name || '',
+    professional: r.professional_name || '',
+    price: Number(r.estimated_value || 0),
+    notes: r.notes || '',
+    googleSyncStatus: r.google_sync_status || undefined,
+    googleEventId: r.google_event_id || undefined,
+    source: (r.source === 'google_calendar' ? 'google_calendar' : 'crm') as 'crm' | 'google_calendar'
+  };
+}
+
+function appointmentToRow(a: any): Record<string, any> {
+  const time = String(a.time || '09:00').slice(0, 5);
+  const duration = Number(a.duration) || 45;
+  return {
+    id: a.id,
+    clinic_id: a.clinicId,
+    lead_id: isUuid(a.leadId) ? a.leadId : null,
+    patient_name: a.patient,
+    patient_phone: a.phone || '',
+    procedure_name: a.procedure || 'Consulta',
+    professional_name: a.professional || null,
+    clinic_name: a.clinicName || null,
+    appointment_date: a.date,
+    start_time: time,
+    duration_minutes: duration,
+    end_time: addMinutes(time, duration),
+    status: APT_STATUS_TO_DB[a.status] || 'pending',
+    notes: a.notes || null,
+    estimated_value: a.price || 0,
+    google_event_id: a.googleEventId || null,
+    google_sync_status: a.googleSyncStatus || null,
+    source: a.source === 'google_calendar' ? 'google_calendar' : 'crm'
+  };
+}
+
+/** null = Supabase indisponível/erro (o chamador mantém o cache local). */
+export async function fetchAppointmentsFromDb(clinicId?: string) {
+  const sb = getSupabase();
+  if (!sb) return null;
+  let q = sb.from('appointments').select('*').order('appointment_date', { ascending: false }).order('start_time', { ascending: true });
+  if (clinicId && clinicId !== 'all') q = q.eq('clinic_id', clinicId);
+  const { data, error } = await q;
+  if (error) {
+    console.error('Erro ao carregar agenda do Supabase:', error.message);
+    return null;
+  }
+  return (data || []).map(rowToAppointment);
+}
+
+export async function saveAppointmentsToDb(apts: any[]): Promise<boolean> {
+  const sb = getSupabase();
+  if (!sb) return true;
+  const valid = apts.filter(a => isUuid(a.id) && isUuid(a.clinicId));
+  if (valid.length === 0) return apts.length === 0;
+  const { error } = await sb.from('appointments').upsert(valid.map(appointmentToRow));
+  if (error) console.error('Erro ao salvar agendamento no Supabase:', error.message);
+  return !error;
+}
+
+export interface DbProfessional { id: string; name: string; specialty: string; clinicId: string }
+
+export async function fetchProfessionalsFromDb(clinicId?: string): Promise<DbProfessional[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  let q = sb.from('professionals').select('id,name,specialty,clinic_id').eq('is_active', true).order('name');
+  if (clinicId && clinicId !== 'all') q = q.eq('clinic_id', clinicId);
+  const { data, error } = await q;
+  if (error) {
+    console.error('Erro ao carregar profissionais do Supabase:', error.message);
+    return [];
+  }
+  return (data || []).map((r: any) => ({ id: r.id, name: r.name, specialty: r.specialty, clinicId: r.clinic_id }));
+}
+
+export async function insertProfessionalInDb(p: { clinicId: string; name: string; email?: string; specialty?: string }): Promise<boolean> {
+  const sb = getSupabase();
+  if (!sb || !isUuid(p.clinicId)) return false;
+  const { error } = await sb.from('professionals').insert([{
+    clinic_id: p.clinicId, name: p.name, email: p.email || null, specialty: p.specialty || 'Clínica Geral'
+  }]);
+  if (error) console.error('Erro ao cadastrar profissional no Supabase:', error.message);
+  return !error;
 }
 
 // ---------------------------------------------------------------------

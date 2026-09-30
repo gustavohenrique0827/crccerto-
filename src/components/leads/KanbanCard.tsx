@@ -101,9 +101,9 @@ export default function KanbanCard({
       className="relative"
     >
       <motion.div 
-        layout
+        onClick={() => { if (!isDragging) onOpenDetail(lead); }}
         className={cn(
-          "bg-[var(--color-surface-elevated)] rounded-[var(--radius-control)] border transition-all cursor-grab active:cursor-grabbing group/card relative shadow-[var(--shadow-control)]",
+          "bg-[var(--color-surface-elevated)] rounded-[var(--radius-control)] border transition-all cursor-pointer active:cursor-grabbing group/card relative shadow-[var(--shadow-control)]",
           isSelected 
             ? "border-[var(--color-primary-blue)] bg-[var(--color-primary-blue)]/10" 
             : "border-[var(--color-border-default)] hover:border-[var(--color-primary-blue)]/50",

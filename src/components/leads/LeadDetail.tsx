@@ -42,7 +42,7 @@ import {
 import { Lead } from '@/src/types';
 import { cn } from '@/src/lib/utils';
 import { useApp } from '@/src/context/AppContext';
-import { fetchLeadTimelineFromDb, LeadTimelineItem } from '@/src/lib/supabase';
+import { fetchLeadTimelineFromDb, LeadTimelineItem, updateLeadEverywhere } from '@/src/lib/supabase';
 
 interface LeadDetailProps {
   isOpen: boolean;
@@ -50,8 +50,77 @@ interface LeadDetailProps {
   lead: Lead | null;
 }
 
-export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
-  const { addToast, currentClinic } = useApp();
+const SOURCE_OPTIONS = ['Meta Ads', 'Google Ads', 'Instagram', 'Facebook', 'WhatsApp', 'Site', 'Indicação', 'Manual / CRM'];
+
+const EDITABLE_FIELDS = ['name', 'whatsapp', 'phone', 'email', 'birthDate', 'cpf', 'cep', 'address', 'procedureType', 'sourceId', 'estimatedValue'] as const;
+
+export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDetailProps) {
+  const { addToast, currentClinic, clinics, setActiveTab: navigateTo } = useApp();
+
+  // Alterações salvas na ficha valem imediatamente, mesmo antes de o pai recarregar o lead
+  const [overrides, setOverrides] = useState<Partial<Lead>>({});
+  const lead = useMemo(() => (leadProp ? ({ ...leadProp, ...overrides } as Lead) : null), [leadProp, overrides]);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setOverrides({});
+  }, [leadProp?.id]);
+
+  useEffect(() => {
+    if (!lead) return;
+    setDraft({
+      name: lead.name || '',
+      whatsapp: lead.whatsapp || '',
+      phone: lead.phone || '',
+      email: lead.email || '',
+      birthDate: lead.birthDate ? String(lead.birthDate).slice(0, 10) : '',
+      cpf: lead.cpf || '',
+      cep: lead.cep || '',
+      address: lead.address || '',
+      procedureType: lead.procedureType || '',
+      sourceId: lead.sourceId || '',
+      estimatedValue: lead.estimatedValue ? String(lead.estimatedValue) : ''
+    });
+  }, [lead?.id, leadProp, overrides]);
+
+  const isDirty = !!lead && EDITABLE_FIELDS.some(f => (draft[f] ?? '') !== String(f === 'birthDate' ? (lead.birthDate || '').slice(0, 10) : (lead as any)[f] ?? (f === 'estimatedValue' ? '' : '')) && !(f === 'estimatedValue' && !lead.estimatedValue && !draft[f]));
+
+  const handleSaveProfile = async () => {
+    if (!lead) return;
+    if (!draft.name?.trim()) {
+      addToast('O nome do lead não pode ficar vazio.', 'error');
+      return;
+    }
+    const updates: Record<string, any> = {};
+    EDITABLE_FIELDS.forEach(f => {
+      const before = f === 'birthDate' ? (lead.birthDate || '').slice(0, 10) : String((lead as any)[f] ?? (f === 'estimatedValue' ? '' : ''));
+      if ((draft[f] ?? '') !== before) {
+        updates[f] = f === 'estimatedValue' ? Number(String(draft[f]).replace(',', '.')) || 0 : draft[f].trim();
+      }
+    });
+    if (Object.keys(updates).length === 0) return;
+    setSaving(true);
+    const ok = await updateLeadEverywhere(lead.id, updates);
+    setSaving(false);
+    if (ok) {
+      setOverrides(prev => ({ ...prev, ...updates }));
+      addToast('Dados do lead atualizados.', 'success');
+    } else {
+      addToast('Não foi possível salvar as alterações no banco de dados.', 'error');
+    }
+  };
+
+  const clinicName = lead ? (clinics.find(c => c.id === lead.clinicId)?.name || 'Clínica não identificada') : '';
+
+  const handleSchedule = () => {
+    if (!lead) return;
+    try {
+      localStorage.setItem('crm_schedule_prefill', JSON.stringify({ leadId: lead.id, name: lead.name, phone: lead.whatsapp || lead.phone, clinicId: lead.clinicId, procedure: lead.procedureType || '' }));
+    } catch {}
+    onClose();
+    navigateTo('appointments');
+  };
   const [activeTab, setActiveTab] = useState<'info' | 'history' | 'procedures' | 'docs' | 'tasks' | 'plan' | 'ai'>('info');
   const [timeline, setTimeline] = useState<LeadTimelineItem[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
@@ -336,12 +405,13 @@ export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
             onClick={onClose}
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50"
           />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 pointer-events-none">
           <motion.div
-            initial={{ x: '100%' }}
-            animate={{ x: 0 }}
-            exit={{ x: '100%' }}
-            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed right-0 top-0 bottom-0 w-full max-w-xl bg-white dark:bg-slate-950 shadow-2xl z-50 overflow-hidden flex flex-col"
+            initial={{ opacity: 0, scale: 0.96, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 16 }}
+            transition={{ type: 'spring', damping: 26, stiffness: 260 }}
+            className="pointer-events-auto w-full max-w-2xl max-h-[90vh] bg-white dark:bg-slate-950 shadow-2xl rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col"
           >
             {/* Header */}
             <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50 relative overflow-hidden">
@@ -407,14 +477,10 @@ export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
             )}
 
             {/* Quick Info Bar */}
-            <div className="grid grid-cols-4 border-b border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-950 text-center">
+            <div className="grid grid-cols-3 border-b border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-950 text-center">
               <div className="p-3 border-r border-slate-100 dark:border-slate-800">
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-0.5">WhatsApp</span>
                 <span className="text-[10px] font-bold text-slate-800 dark:text-slate-200 truncate block">{lead.whatsapp || lead.phone || '-'}</span>
-              </div>
-              <div className="p-3 border-r border-slate-100 dark:border-slate-800">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-0.5">E-mail</span>
-                <span className="text-[10px] font-bold text-slate-800 dark:text-slate-200 truncate block">{lead.email || '-'}</span>
               </div>
               <div className="p-3 border-r border-slate-100 dark:border-slate-800">
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-0.5">Notas</span>
@@ -457,53 +523,78 @@ export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
                     className="space-y-4"
                   >
                     <div className="bg-slate-50 dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-4">
-                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                        <User size={14} className="text-blue-500" />
-                        Informações Cadastrais do Cliente
-                      </h3>
-                      
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                          <User size={14} className="text-blue-500" />
+                          Informações Cadastrais (editável)
+                        </h3>
+                        {isDirty && (
+                          <button
+                            onClick={handleSaveProfile}
+                            disabled={saving}
+                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-lg text-[11px] font-bold transition-colors"
+                          >
+                            {saving ? 'Salvando...' : 'Salvar alterações'}
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Nome Completo</span>
-                          <span className="text-xs font-bold text-slate-800 dark:text-white">{lead.name}</span>
-                        </div>
-                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Telefone / WhatsApp</span>
-                          <span className="text-xs font-bold text-slate-800 dark:text-white">{lead.whatsapp || lead.phone || 'Não informado'}</span>
-                        </div>
-                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Data de Nascimento</span>
-                          <span className="text-xs font-bold text-slate-800 dark:text-white">{lead.birthDate ? new Date(lead.birthDate).toLocaleDateString('pt-BR') : 'Não informada'}</span>
-                        </div>
-                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <input type="text" value={draft.name ?? ''} onChange={e => setDraft(d => ({ ...d, name: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                        </label>
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">WhatsApp</span>
+                          <input type="tel" value={draft.whatsapp ?? ''} onChange={e => setDraft(d => ({ ...d, whatsapp: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                        </label>
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Telefone</span>
+                          <input type="tel" value={draft.phone ?? ''} onChange={e => setDraft(d => ({ ...d, phone: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                        </label>
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">E-mail</span>
-                          <span className="text-xs font-bold text-slate-800 dark:text-white truncate block">{lead.email || 'Não informado'}</span>
-                        </div>
-                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <input type="email" value={draft.email ?? ''} onChange={e => setDraft(d => ({ ...d, email: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                        </label>
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Data de Nascimento</span>
+                          <input type="date" value={draft.birthDate ?? ''} onChange={e => setDraft(d => ({ ...d, birthDate: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                        </label>
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">CPF</span>
-                          <span className="text-xs font-bold text-slate-800 dark:text-white">{lead.cpf || 'Não informado'}</span>
-                        </div>
-                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <input type="text" value={draft.cpf ?? ''} onChange={e => setDraft(d => ({ ...d, cpf: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                        </label>
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">CEP</span>
-                          <span className="text-xs font-bold text-slate-800 dark:text-white">{lead.cep || 'Não informado'}</span>
-                        </div>
+                          <input type="text" value={draft.cep ?? ''} onChange={e => setDraft(d => ({ ...d, cep: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                        </label>
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Procedimento de interesse</span>
+                          <input type="text" value={draft.procedureType ?? ''} onChange={e => setDraft(d => ({ ...d, procedureType: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                        </label>
                       </div>
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Endereço Completo</span>
+                          <input type="text" value={draft.address ?? ''} onChange={e => setDraft(d => ({ ...d, address: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                        </label>
 
-                      <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
-                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Endereço Completo</span>
-                        <span className="text-xs font-bold text-slate-800 dark:text-white">{lead.address || 'Não informado'}</span>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Clínica / Unidade</span>
-                          <span className="text-xs font-bold text-slate-800 dark:text-white">{lead.clinicId === '1' ? 'Odonto Premium' : 'Estética Viver'}</span>
+                          <span className="text-xs font-bold text-slate-800 dark:text-white">{clinicName}</span>
                         </div>
-                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Origem / Canal</span>
-                          <span className="text-xs font-bold text-slate-800 dark:text-white uppercase">{lead.sourceId || 'Tráfego'}</span>
-                        </div>
+                          <select value={draft.sourceId ?? ''} onChange={e => setDraft(d => ({ ...d, sourceId: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none">
+                            {draft.sourceId && !SOURCE_OPTIONS.includes(draft.sourceId) && <option value={draft.sourceId}>{draft.sourceId}</option>}
+                            {SOURCE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                          </select>
+                        </label>
                       </div>
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Valor estimado (R$)</span>
+                          <input type="number" value={draft.estimatedValue ?? ''} onChange={e => setDraft(d => ({ ...d, estimatedValue: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                        </label>
 
                       {lead?.tags && lead.tags.length > 0 && (
                         <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
@@ -888,14 +979,15 @@ export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
                 WhatsApp
               </button>
               <button 
-                onClick={() => handleQuickAction('email')}
+                onClick={handleSchedule}
                 className="py-2.5 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-blue-500 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 shadow-xs transition-all active:scale-[0.98]"
               >
-                <Mail size={14} className="text-indigo-600" />
-                E-mail
+                <CalendarCheck size={14} className="text-indigo-600" />
+                Agendar
               </button>
             </div>
           </motion.div>
+          </div>
 
           {/* Quick Action Template Modal */}
           {quickActionModal.isOpen && (

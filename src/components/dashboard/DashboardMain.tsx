@@ -28,6 +28,7 @@ import {
 import { cn } from '../../lib/utils';
 import DashboardFilters from './DashboardFilters';
 import DayTaskResolverModal, { TaskCategoryType } from './DayTaskResolverModal';
+import TaskReminders from './TaskReminders';
 import ChannelConversionChart from '../analytics/ChannelConversionChart';
 import { useApp } from '../../context/AppContext';
 import { useSupabaseDashboardStats } from '../../lib/supabase';
@@ -181,6 +182,9 @@ export default function DashboardMain({ selectedClinicId }: DashboardMainProps) 
         {/* 2. OVERVIEW METRICS VIA StatCellRow (GRID 1/2/4) */}
         <StatCellRow stats={healthStatItems} cols={4} />
       </div>
+
+      {/* 2.5 LEMBRETES DE TAREFAS PERTO DO VENCIMENTO */}
+      <TaskReminders />
 
       {/* 3. VISÃO DO DIA & TAREFAS OPERACIONAIS */}
       <Card className="space-y-4">

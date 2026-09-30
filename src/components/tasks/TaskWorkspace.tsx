@@ -15,7 +15,8 @@ import {
   Trash2,
   Circle,
   Activity,
-  Check
+  Check,
+  Pencil
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/src/lib/utils';
@@ -23,92 +24,64 @@ import { useApp } from '@/src/context/AppContext';
 import { exportToCSV } from '@/src/lib/exportUtils';
 import TaskModal from '../dashboard/TaskModal';
 
-import { INITIAL_TASKS } from '@/src/lib/mockData';
+import { useTasks, CrmTask, dueState } from '@/src/lib/tasksStore';
+import { isSupabaseConfigured, newUuid } from '@/src/lib/supabase';
 
-interface Task {
-  id: string;
-  title: string;
-  description: string;
-  responsible: string;
-  clinic: string;
-  priority: 'low' | 'medium' | 'high';
-  status: 'todo' | 'in_progress' | 'waiting' | 'completed';
-  dueDate: string;
-  patientName?: string;
-}
+type Task = CrmTask;
 
 export default function TaskWorkspace() {
-  const { clinics, user, addToast } = useApp();
+  const { clinics, user, addToast, currentClinicId } = useApp();
   const [view, setView] = useState<'list' | 'kanban'>('list');
   const [activeFilter, setActiveFilter] = useState<'all' | 'today' | 'pending' | 'completed'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
 
-  const [tasks, setTasks] = useState<Task[]>(() => {
-    try {
-      const saved = localStorage.getItem('crm_tasks_data');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed.map((t: any) => ({
-            ...t,
-            status: t.status === 'pending' ? 'todo' : t.status
-          }));
-        }
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    return INITIAL_TASKS.map(t => ({
-      ...t,
-      status: t.status === 'pending' ? 'todo' : (t.status as any),
-      responsible: t.responsibleId || user?.name || 'Comercial',
-      clinic: clinics[0]?.name || 'Unidade Principal'
-    }));
-  });
+  const { tasks, saveTask, removeTask } = useTasks();
 
-  const saveTasks = (list: Task[]) => {
-    setTasks(list);
-    try {
-      localStorage.setItem('crm_tasks_data', JSON.stringify(list));
-    } catch (e) {
-      console.error(e);
-    }
+  const persist = async (task: Task, okMessage: string) => {
+    const ok = await saveTask(task, user?.id);
+    if (ok) addToast(okMessage, 'success');
+    else addToast('Não foi possível salvar a tarefa no banco de dados.', 'error');
   };
 
   const handleAddTask = (taskData: any) => {
+    const targetClinic = clinics.find(c => c.id === currentClinicId) || clinics[0];
     const newTask: Task = {
-      id: String(Date.now()),
+      id: isSupabaseConfigured() ? newUuid() : String(Date.now()),
       title: taskData.title || 'Nova Tarefa',
       description: taskData.description || '',
       responsible: taskData.responsible || user?.name || 'Comercial',
-      clinic: clinics[0]?.name || 'Unidade Principal',
+      responsibleId: taskData.responsibleId || undefined,
+      clinic: targetClinic?.name || 'Unidade Principal',
+      clinicId: targetClinic?.id,
       priority: taskData.priority || 'medium',
       status: 'todo',
       dueDate: taskData.dueDate || new Date().toISOString().split('T')[0],
-      patientName: taskData.leadName || undefined
+      patientName: taskData.leadName || undefined,
+      leadId: taskData.leadId || undefined
     };
+    persist(newTask, 'Tarefa criada com sucesso!');
+  };
 
-    const updated = [newTask, ...tasks];
-    saveTasks(updated);
-    addToast('Tarefa criada com sucesso!', 'success');
+  const handleUpdateTask = (updated: Task) => {
+    persist(updated, 'Tarefa atualizada.');
+  };
+
+  const openEdit = (task: Task) => {
+    setEditingTask(task);
+    setIsTaskModalOpen(true);
   };
 
   const handleToggleTaskStatus = (id: string) => {
-    const updated = tasks.map(t => {
-      if (t.id === id) {
-        const nextStatus = t.status === 'completed' ? 'todo' : 'completed';
-        return { ...t, status: nextStatus as any };
-      }
-      return t;
-    });
-    saveTasks(updated);
+    const t = tasks.find(x => x.id === id);
+    if (!t) return;
+    persist({ ...t, status: t.status === 'completed' ? 'todo' : 'completed' }, t.status === 'completed' ? 'Tarefa reaberta.' : 'Tarefa concluída.');
   };
 
-  const handleDeleteTask = (id: string) => {
-    const updated = tasks.filter(t => t.id !== id);
-    saveTasks(updated);
-    addToast('Tarefa excluída.', 'info');
+  const handleDeleteTask = async (id: string) => {
+    const ok = await removeTask(id);
+    addToast(ok ? 'Tarefa excluída.' : 'Não foi possível excluir a tarefa no banco de dados.', ok ? 'info' : 'error');
   };
 
   const todayStr = new Date().toISOString().split('T')[0];
@@ -345,13 +318,22 @@ export default function TaskWorkspace() {
                       </span>
                     </td>
                     <td className="px-6 py-4">
-                      <button 
-                        onClick={() => handleDeleteTask(task.id)}
-                        className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg transition-colors cursor-pointer"
-                        title="Excluir tarefa"
-                      >
-                        <Trash2 size={16} />
-                      </button>
+                      <div className="flex items-center gap-0.5">
+                        <button 
+                          onClick={() => openEdit(task)}
+                          className="p-1.5 text-slate-400 hover:text-blue-600 rounded-lg transition-colors cursor-pointer"
+                          title="Editar tarefa"
+                        >
+                          <Pencil size={16} />
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteTask(task.id)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg transition-colors cursor-pointer"
+                          title="Excluir tarefa"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -381,13 +363,22 @@ export default function TaskWorkspace() {
                        )}>
                          {task.priority === 'high' ? 'Alta' : task.priority === 'medium' ? 'Média' : 'Baixa'}
                        </span>
-                       <button 
-                         onClick={() => handleDeleteTask(task.id)}
-                         className="text-slate-300 hover:text-rose-500 transition-colors cursor-pointer"
-                         title="Excluir"
-                       >
-                         <Trash2 size={14} />
-                       </button>
+                       <div className="flex items-center gap-1.5">
+                         <button
+                           onClick={() => openEdit(task)}
+                           className="text-slate-300 hover:text-blue-500 transition-colors cursor-pointer"
+                           title="Editar"
+                         >
+                           <Pencil size={14} />
+                         </button>
+                         <button 
+                           onClick={() => handleDeleteTask(task.id)}
+                           className="text-slate-300 hover:text-rose-500 transition-colors cursor-pointer"
+                           title="Excluir"
+                         >
+                           <Trash2 size={14} />
+                         </button>
+                       </div>
                     </div>
                     <h4 className="text-xs font-bold text-slate-900 dark:text-white mb-2 leading-snug">{task.title}</h4>
                     {task.description && (
@@ -418,8 +409,10 @@ export default function TaskWorkspace() {
 
       <TaskModal 
         isOpen={isTaskModalOpen}
-        onClose={() => setIsTaskModalOpen(false)}
+        onClose={() => { setIsTaskModalOpen(false); setEditingTask(null); }}
         onAddTask={handleAddTask}
+        editingTask={editingTask}
+        onUpdateTask={handleUpdateTask}
       />
     </div>
   );

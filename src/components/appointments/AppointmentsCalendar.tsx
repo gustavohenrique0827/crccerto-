@@ -49,6 +49,7 @@ import {
   SyncQueueItem 
 } from '../../lib/syncQueue';
 import { createCalendarEvent, performBidirectionalSync } from '../../lib/googleCalendar';
+import { isSupabaseConfigured, fetchAppointmentsFromDb, saveAppointmentsToDb } from '../../lib/supabase';
 import { buildGoogleEventFromAppointment, getCalendarFieldMapping } from '../../lib/googleCalendarMapping';
 import { getGoogleSyncSettings, recordSyncExecution } from '../../lib/googleSyncSettings';
 
@@ -223,6 +224,14 @@ export default function AppointmentsCalendar() {
 
   // Fetch appointments from API
   useEffect(() => {
+    if (isSupabaseConfigured()) {
+      fetchAppointmentsFromDb(effectiveClinicId).then(list => {
+        if (!list) return;
+        setAppointments(list as any);
+        try { localStorage.setItem('crm_appointments_data', JSON.stringify(list)); } catch {}
+      });
+      return;
+    }
     const clinicParam = effectiveClinicId && effectiveClinicId !== 'all' ? `?clinicId=${effectiveClinicId}` : '';
     fetch(`/api/appointments${clinicParam}`)
       .then(res => res.json())
@@ -253,7 +262,7 @@ export default function AppointmentsCalendar() {
     try {
       const activeClinicName = clinics.find(c => c.id === effectiveClinicId)?.name || currentClinic?.name || 'Odonto Premium';
       const result = await performBidirectionalSync(token!, appointments, {
-        defaultClinicId: effectiveClinicId !== 'all' ? effectiveClinicId : '1',
+        defaultClinicId: effectiveClinicId !== 'all' ? effectiveClinicId : (clinics[0]?.id || '1'),
         defaultClinicName: activeClinicName,
       });
 
@@ -294,6 +303,16 @@ export default function AppointmentsCalendar() {
       setIsPullingGoogleEvents(false);
     }
   }, [googleAccessToken, appointments, effectiveClinicId, clinics, currentClinic, addToast]);
+
+  // Vindo do botão "Agendar" da ficha do lead: abre o modal já preenchido
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('crm_schedule_prefill')) {
+        setSelectedSlotForSchedule(null);
+        setShowScheduleModal(true);
+      }
+    } catch {}
+  }, []);
 
   const hasAutoSyncedRef = useRef(false);
 
@@ -631,11 +650,17 @@ export default function AppointmentsCalendar() {
     } catch (e) {
       console.error(e);
     }
-    fetch('/api/appointments', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(finalizedApt)
-    }).catch(console.error);
+    if (isSupabaseConfigured()) {
+      saveAppointmentsToDb([finalizedApt]).then(ok => {
+        if (!ok) addToast('Agendamento salvo só neste navegador: não foi possível gravá-lo no banco de dados.', 'error');
+      });
+    } else {
+      fetch('/api/appointments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(finalizedApt)
+      }).catch(console.error);
+    }
   };
 
   const handleImportAppointments = (updatedList: Appointment[]) => {
@@ -650,11 +675,15 @@ export default function AppointmentsCalendar() {
     }
 
     // Save in batch to backend
-    fetch('/api/appointments/batch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updatedList)
-    }).catch(console.error);
+    if (isSupabaseConfigured()) {
+      saveAppointmentsToDb(updatedList);
+    } else {
+      fetch('/api/appointments/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedList)
+      }).catch(console.error);
+    }
   };
 
   // Data Isolation by Clinic:
@@ -1502,13 +1531,6 @@ export default function AppointmentsCalendar() {
                               );
                             })}
 
-                            {aptsInSlot.length === 0 && (
-                              <div className="w-full h-full min-h-[40px] flex items-center justify-center opacity-0 group-hover/slot:opacity-100 transition-opacity">
-                                <span className="text-[9px] font-bold text-blue-500 bg-blue-50 dark:bg-blue-900/40 px-2 py-0.5 rounded-md flex items-center gap-1">
-                                  <Plus size={10} /> + Agendar
-                                </span>
-                              </div>
-                            )}
                           </div>
                         );
                       })}
@@ -2448,8 +2470,8 @@ export default function AppointmentsCalendar() {
           initialDate={selectedSlotForSchedule?.date}
           initialTime={selectedSlotForSchedule?.time}
           onAddAppointment={handleAddAppointment}
-          clinicId={effectiveClinicId !== 'all' ? effectiveClinicId : '1'}
-          clinicName={clinics.find(c => c.id === effectiveClinicId)?.name || currentClinic?.name || 'Odonto Premium'}
+          clinicId={effectiveClinicId !== 'all' ? effectiveClinicId : (clinics[0]?.id || '1')}
+          clinicName={clinics.find(c => c.id === effectiveClinicId)?.name || currentClinic?.name || clinics[0]?.name || 'Clínica'}
         />
       )}
 

@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '@/src/context/AppContext';
 import { exportToCSV } from '@/src/lib/exportUtils';
-import { fetchProfilesFromDb } from '@/src/lib/supabase';
+import { fetchProfilesFromDb, insertProfessionalInDb, isSupabaseConfigured } from '@/src/lib/supabase';
 
 interface TeamMember {
   id: string;
@@ -156,6 +156,15 @@ export default function TeamManagement() {
     };
 
     saveTeam([...team, member]);
+
+    // Dentistas/especialistas viram profissionais da clínica no banco (aparecem na Agenda)
+    const isProfessionalRole = /dentista|cirurgi|ortodont|implant|especialista/i.test(member.role);
+    const targetClinic = clinics.find(c => c.name === member.clinic);
+    if (isSupabaseConfigured() && isProfessionalRole && targetClinic) {
+      insertProfessionalInDb({ clinicId: targetClinic.id, name: member.name, email: member.email, specialty: member.role }).then(ok => {
+        if (!ok) addToast(`"${member.name}" não pôde ser cadastrado como profissional no banco.`, 'error');
+      });
+    }
     setIsInviteModalOpen(false);
     setNewMember({
       name: '',
