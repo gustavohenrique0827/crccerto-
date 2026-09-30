@@ -168,10 +168,10 @@ export default function DashboardMain({ selectedClinicId }: DashboardMainProps) 
           </div>
           <div className="space-y-3">
             {[
-              { label: 'Leads', value: stats.funnel.leads, color: 'bg-[var(--color-primary-blue)]' },
-              { label: 'Agendamentos', value: stats.funnel.appointed, color: 'bg-indigo-500' },
-              { label: 'Comparecimentos', value: stats.funnel.attended, color: 'bg-emerald-500' },
-              { label: 'Vendas', value: stats.funnel.sold, color: 'bg-amber-500' }
+              { label: 'Leads', value: stats.funnel.leads, color: 'bg-[var(--stage-2)]' },
+              { label: 'Agendamentos', value: stats.funnel.appointed, color: 'bg-[var(--stage-5)]' },
+              { label: 'Comparecimentos', value: stats.funnel.attended, color: 'bg-[var(--stage-6)]' },
+              { label: 'Vendas', value: stats.funnel.sold, color: 'bg-[var(--stage-7)]' }
             ].map(step => (
               <div key={step.label} className="space-y-1">
                 <div className="flex items-center justify-between text-xs">

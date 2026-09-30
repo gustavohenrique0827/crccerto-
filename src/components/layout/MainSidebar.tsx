@@ -137,18 +137,18 @@ export function MainSidebar({
 
       <aside
         className={cn(
-          "flex select-none transition-all duration-300 z-50 shrink-0 bg-[var(--color-surface)] border-r border-[var(--color-border-default)]",
+          "flex select-none transition-all duration-300 z-50 shrink-0 bg-[var(--color-surface-elevated)] border-r border-[var(--color-border-default)]",
           "fixed lg:relative inset-y-0 left-0 h-screen",
           isMobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         )}
       >
         {/* Coluna de ícones (áreas) */}
-        <div className="w-14 flex flex-col items-center py-3 gap-1 border-r border-[var(--color-border-subtle)] bg-[var(--color-surface-sunken)]/40">
+        <div className="w-14 flex flex-col items-center py-3 gap-1.5 bg-[var(--color-rail)]">
           <button
             type="button"
             title="Início"
             onClick={() => goTo('dashboard')}
-            className="w-9 h-9 mb-2 rounded-[var(--radius-control)] bg-[var(--color-primary-blue)] flex items-center justify-center text-white shadow-sm cursor-pointer"
+            className="w-9 h-9 mb-3 rounded-[var(--radius-control)] bg-[var(--color-tech-cyan)] flex items-center justify-center text-[#04222A] cursor-pointer"
           >
             <Boxes size={18} />
           </button>
@@ -163,12 +163,13 @@ export function MainSidebar({
                 title={area.label}
                 onClick={() => goTo(isActive ? currentTab : area.items[0].id)}
                 className={cn(
-                  "w-9 h-9 rounded-[var(--radius-control)] flex items-center justify-center transition-colors cursor-pointer",
+                  "relative w-9 h-9 rounded-[var(--radius-control)] flex items-center justify-center transition-colors cursor-pointer",
                   isActive
-                    ? "bg-[var(--color-primary-blue)]/12 text-[var(--color-primary-blue)]"
-                    : "text-[var(--color-text-faint)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text-primary)]"
+                    ? "bg-white/12 text-white"
+                    : "text-[var(--color-rail-fg)] hover:bg-white/8 hover:text-white"
                 )}
               >
+                {isActive && <span className="absolute -left-2.5 top-2 bottom-2 w-[3px] rounded-r bg-[var(--color-tech-cyan)]" />}
                 <Icon size={18} />
               </button>
             );
@@ -183,8 +184,8 @@ export function MainSidebar({
             className={cn(
               "w-9 h-9 rounded-[var(--radius-control)] flex items-center justify-center transition-colors cursor-pointer",
               currentTab === 'guia'
-                ? "bg-[var(--color-primary-blue)]/12 text-[var(--color-primary-blue)]"
-                : "text-[var(--color-text-faint)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text-primary)]"
+                ? "bg-white/12 text-white"
+                : "text-[var(--color-rail-fg)] hover:bg-white/8 hover:text-white"
             )}
           >
             <BookOpen size={18} />
@@ -193,7 +194,7 @@ export function MainSidebar({
 
         {/* Painel contextual da área */}
         {!isCollapsed && (
-          <div className="w-52 flex flex-col">
+          <div className="w-52 flex flex-col bg-[var(--color-surface-elevated)]">
             {/* Seletor de clínica (único ponto para trocar de unidade) */}
             <div className="p-3 border-b border-[var(--color-border-subtle)]">
               <div className="flex items-center gap-2 px-2.5 py-2 rounded-[var(--radius-control)] border border-[var(--color-border-default)] bg-[var(--color-surface-elevated)]">
@@ -214,7 +215,7 @@ export function MainSidebar({
             <nav className="flex-1 overflow-y-auto p-3 space-y-1 custom-scrollbar">
               {panelArea && (
                 <>
-                  <p className="px-2 pb-1 text-[10px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">
+                  <p className="px-2 pb-2 font-display text-sm font-semibold tracking-tight text-[var(--color-text-primary)]">
                     {panelArea.label}
                   </p>
                   {panelArea.items.map(item => {
@@ -228,7 +229,7 @@ export function MainSidebar({
                         className={cn(
                           "w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold rounded-[var(--radius-control)] transition-colors cursor-pointer text-left",
                           isActive
-                            ? "bg-[var(--color-primary-blue)]/12 text-[var(--color-primary-blue)]"
+                            ? "bg-[var(--color-primary-blue)]/10 text-[var(--color-primary-blue)]"
                             : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text-primary)]"
                         )}
                       >

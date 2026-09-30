@@ -16,6 +16,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@/src/lib/utils';
+import { STAGE_VAR } from '@/src/lib/stageColors';
 
 interface KanbanCardProps {
   key?: string | number;
@@ -101,6 +102,7 @@ export default function KanbanCard({
       className="relative"
     >
       <motion.div 
+        style={{ borderLeftColor: STAGE_VAR[lead.status], borderLeftWidth: 3 }}
         onClick={() => { if (!isDragging) onOpenDetail(lead); }}
         className={cn(
           "bg-[var(--color-surface-elevated)] rounded-[var(--radius-control)] border transition-all cursor-pointer active:cursor-grabbing group/card relative shadow-[var(--shadow-control)]",
@@ -273,7 +275,7 @@ export default function KanbanCard({
         <div className={cn(
           "flex items-center justify-between border-t border-[var(--color-border-subtle)] pt-1.5 text-[9px]",
         )}>
-          <span className="text-[var(--color-text-muted)] font-normal truncate">{lead.whatsapp}</span>
+          <span className="text-[var(--color-text-muted)] font-mono font-normal truncate">{lead.whatsapp}</span>
           <button 
             onClick={(e) => {
               e.stopPropagation();

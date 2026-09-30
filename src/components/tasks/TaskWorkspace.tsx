@@ -305,7 +305,7 @@ export default function TaskWorkspace() {
                     </td>
                     <td className="px-6 py-4">
                       <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
-                        {task.dueDate}
+                        {task.dueDate ? task.dueDate.slice(0, 10).split('-').reverse().join('/') : '—'}
                       </span>
                     </td>
                     <td className="px-6 py-4">
@@ -387,7 +387,7 @@ export default function TaskWorkspace() {
                     <div className="flex items-center justify-between pt-3 border-t border-slate-50 dark:border-slate-800 mt-2">
                        <div className="flex items-center gap-1.5 text-[9px] font-bold text-slate-400 uppercase">
                           <Clock size={10} />
-                          <span>{task.dueDate}</span>
+                          <span>{task.dueDate ? task.dueDate.slice(0, 10).split('-').reverse().join('/') : '—'}</span>
                        </div>
                        <button 
                          onClick={() => handleToggleTaskStatus(task.id)}

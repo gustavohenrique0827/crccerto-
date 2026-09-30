@@ -48,16 +48,16 @@ import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 
 const STAGES: { id: LeadStatus; label: string; color: string; bg: string }[] = [
-  { id: LeadStatus.NEW, label: 'Novo lead', color: 'bg-slate-400', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.FIRST_CONTACT, label: '1° contato', color: 'bg-slate-400', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.SECOND_CONTACT, label: '2° contato', color: 'bg-slate-400', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.THIRD_CONTACT, label: '3° contato', color: 'bg-slate-400', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.INTERACTED, label: 'Interagiu', color: 'bg-slate-400', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.APPOINTMENT, label: 'Agendado', color: 'bg-[var(--color-primary-blue)]', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.ATTENDED, label: 'Compareceu', color: 'bg-[var(--color-success)]', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.SOLD, label: 'Comprou', color: 'bg-[var(--color-success)]', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.MISSED, label: 'Faltou', color: 'bg-[var(--color-danger)]', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.DISQUALIFIED, label: 'Desqualificado', color: 'bg-slate-400', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.NEW, label: 'Novo lead', color: 'bg-[var(--stage-0)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.FIRST_CONTACT, label: '1° contato', color: 'bg-[var(--stage-1)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.SECOND_CONTACT, label: '2° contato', color: 'bg-[var(--stage-2)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.THIRD_CONTACT, label: '3° contato', color: 'bg-[var(--stage-3)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.INTERACTED, label: 'Interagiu', color: 'bg-[var(--stage-4)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.APPOINTMENT, label: 'Agendado', color: 'bg-[var(--stage-5)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.ATTENDED, label: 'Compareceu', color: 'bg-[var(--stage-6)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.SOLD, label: 'Comprou', color: 'bg-[var(--stage-7)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.MISSED, label: 'Faltou', color: 'bg-[var(--stage-lost)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.DISQUALIFIED, label: 'Desqualificado', color: 'bg-[var(--stage-void)]', bg: 'bg-[var(--color-surface-sunken)]' },
 ];
 
 const LEAD_SOURCES = [
