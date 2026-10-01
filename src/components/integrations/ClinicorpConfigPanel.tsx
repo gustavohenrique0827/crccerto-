@@ -57,7 +57,7 @@ interface CronSyncLog {
 
 export default function ClinicorpConfigPanel({ onBack }: ClinicorpConfigPanelProps) {
   const { addToast } = useApp();
-  const [apiKey, setApiKey] = useState('16cd1c77-d105-4229-8496-51471d1b502c');
+  const [apiKey, setApiKey] = useState(() => { try { return localStorage.getItem('clinicorp_api_key_ceopodontologia') || ''; } catch { return ''; } });
   const [isTesting, setIsTesting] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success'>('idle');
   const [copied, setCopied] = useState(false);
