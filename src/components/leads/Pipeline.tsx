@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Columns, 
   List, 
@@ -99,6 +99,33 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
   const [columnWidth, setColumnWidth] = useState<number>(280);
   const [localSearch, setLocalSearch] = useState('');
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeWidth, setActiveWidth] = useState<number | null>(null);
+  const boardRef = useRef<HTMLDivElement | null>(null);
+
+  // Rolagem horizontal do quadro durante o arrasto: só quando o ponteiro está perto da borda.
+  // (A rolagem automática do dnd-kit disparava com o card no meio da tela.)
+  useEffect(() => {
+    if (!activeId) return;
+    let pointerX: number | null = null;
+    let frame = 0;
+    const onMove = (e: PointerEvent) => { pointerX = e.clientX; };
+    const tick = () => {
+      const board = boardRef.current;
+      if (board && pointerX !== null) {
+        const r = board.getBoundingClientRect();
+        const zone = 80;
+        if (pointerX < r.left + zone) board.scrollLeft -= Math.min(18, (r.left + zone - pointerX) / 4);
+        else if (pointerX > r.right - zone) board.scrollLeft += Math.min(18, (pointerX - (r.right - zone)) / 4);
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    window.addEventListener('pointermove', onMove);
+    frame = requestAnimationFrame(tick);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      cancelAnimationFrame(frame);
+    };
+  }, [activeId]);
   const [focusedLeadId, setFocusedLeadId] = useState<string | null>(null);
 
   const [stageGoals, setStageGoals] = useState<Record<string, StageGoal>>({
@@ -248,6 +275,9 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
 
   const handleDragStart = (event: DragStartEvent) => {
     setActiveId(event.active.id as string);
+    // Largura real do card/coluna arrastado: a cópia do overlay precisa ter o mesmo tamanho
+    const el = document.querySelector(`[data-kanban-card="${String(event.active.id)}"]`);
+    setActiveWidth(el ? el.getBoundingClientRect().width : null);
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -549,10 +579,11 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
           <DndContext
             sensors={sensors}
             collisionDetection={collisionDetection}
+            autoScroll={false}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
           >
-            <div className={cn(
+            <div ref={boardRef} className={cn(
               "flex overflow-x-auto pb-6 custom-scrollbar h-full transition-all duration-300",
               columnWidth < 250 ? "gap-3" : "gap-4"
             )}>
@@ -594,18 +625,19 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
               easing: 'cubic-bezier(0.18, 0.67, 0.6, 1.22)',
             }}>
               {activeLead ? (
-                <div style={{ width: `${Math.min(320, columnWidth)}px` }} className="rotate-3 scale-105 transition-transform">
+                <div style={{ width: activeWidth ? `${activeWidth}px` : `${Math.min(320, columnWidth)}px` }}>
                   <KanbanCard 
                     lead={activeLead} 
                     onOpenDetail={() => {}} 
                     onStatusChange={() => {}}
                     isCompact={isCompact || columnWidth < 250}
+                    isOverlay
                   />
                 </div>
               ) : activeStage ? (
                 <div 
-                  style={{ width: `${columnWidth}px` }} 
-                  className="bg-[var(--color-surface-elevated)] border-2 border-[var(--color-primary-blue)] p-3 rounded-[var(--radius-panel)] shadow-[var(--shadow-panel)] flex items-center gap-2 text-xs font-bold text-[var(--color-text-primary)] rotate-2 scale-105"
+                  style={{ width: `${activeWidth ?? columnWidth}px` }} 
+                  className="bg-[var(--color-surface-elevated)] border-2 border-[var(--color-primary-blue)] p-3 rounded-[var(--radius-panel)] shadow-[var(--shadow-panel)] flex items-center gap-2 text-xs font-bold text-[var(--color-text-primary)]"
                 >
                   <GripVertical size={16} className="text-[var(--color-primary-blue)]" />
                   <div className={`w-3 h-3 rounded-full ${activeStage.color}`} />

@@ -27,6 +27,8 @@ interface KanbanCardProps {
   isCompact?: boolean;
   isSelected?: boolean;
   onToggleSelect?: (leadId: string) => void;
+  /** Cópia exibida dentro do DragOverlay: sem sortable próprio, sem deslocamento. */
+  isOverlay?: boolean;
 }
 
 const STAGES: { id: LeadStatus; label: string }[] = [
@@ -49,7 +51,8 @@ export default function KanbanCard({
   isFocused, 
   isCompact,
   isSelected,
-  onToggleSelect 
+  onToggleSelect,
+  isOverlay
 }: KanbanCardProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   
@@ -60,12 +63,14 @@ export default function KanbanCard({
     transform,
     transition,
     isDragging
-  } = useSortable({ id: lead.id });
+  } = useSortable({ id: isOverlay ? `overlay-${lead.id}` : lead.id, disabled: isOverlay });
 
+  // O card que está sendo arrastado fica parado no lugar (marca a origem); quem acompanha o
+  // mouse é o DragOverlay. Aplicar o transform aqui duplicava o deslocamento.
   const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
+    transform: isOverlay || isDragging ? undefined : CSS.Transform.toString(transform),
+    transition: isOverlay ? undefined : transition,
+    opacity: isDragging ? 0.35 : 1,
     zIndex: isDragging ? 50 : 1,
   };
 
@@ -97,7 +102,8 @@ export default function KanbanCard({
 
   return (
     <div
-      ref={setNodeRef}
+      ref={isOverlay ? undefined : setNodeRef}
+      data-kanban-card={isOverlay ? undefined : lead.id}
       style={style}
       className="relative"
     >
@@ -110,11 +116,12 @@ export default function KanbanCard({
             ? "border-[var(--color-primary-blue)] bg-[var(--color-primary-blue)]/10" 
             : "border-[var(--color-border-default)] hover:border-[var(--color-primary-blue)]/50",
           isCompact ? "p-2 space-y-1.5" : "p-3 space-y-2",
-          isDragging && "border-[var(--color-primary-blue)] opacity-60",
+          isDragging && "border-[var(--color-primary-blue)]",
+          isOverlay && "shadow-[var(--shadow-panel)] border-[var(--color-primary-blue)] cursor-grabbing",
           isFocused && "border-[var(--color-primary-blue)]"
         )}
-        {...attributes}
-        {...listeners}
+        {...(isOverlay ? {} : attributes)}
+        {...(isOverlay ? {} : listeners)}
       >
         <div className="flex items-start justify-between gap-1.5">
           {/* Multi-Select Checkbox */}
