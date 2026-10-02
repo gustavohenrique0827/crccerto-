@@ -102,7 +102,9 @@ export default async function handler(req: Req, res: Res) {
       clinicorpGet('appointment/list', range)
     ]);
 
-    const real = (apts as any[]).filter(a => a.CategoryDescription !== 'Agenda Fechada' && a.PatientName);
+    // "Agenda Fechada" e similares são bloqueios de horário, não pacientes
+    const isPlaceholder = (name: string) => /^\s*(agenda\s+fechada|agendar\s+abert)/i.test(name || '');
+    const real = (apts as any[]).filter(a => a.CategoryDescription !== 'Agenda Fechada' && a.PatientName && !isPlaceholder(a.PatientName));
     const blocked = (apts as any[]).length - real.length;
 
     const patientsById = new Map<string, any>();

@@ -618,6 +618,84 @@ export async function fetchLeadTimelineFromDb(lead: Pick<Lead, 'id' | 'phone' | 
 }
 
 // ---------------------------------------------------------------------
+// Pacientes (tabela patients; separada de leads)
+// ---------------------------------------------------------------------
+
+export interface PatientRow {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  lastVisit: string;
+  nextAppointment?: string;
+  status: 'active' | 'inactive';
+  clinicId: string;
+  fromClinicorp: boolean;
+}
+
+async function fetchAllRows(build: (from: number, to: number) => any): Promise<any[]> {
+  const out: any[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await build(from, from + 999);
+    if (error) throw new Error(error.message);
+    out.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+
+/** null = Supabase indisponível/erro. Última visita e próxima consulta vêm da agenda. */
+export async function fetchPatientsFromDb(clinicId?: string): Promise<PatientRow[] | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const filterClinic = clinicId && clinicId !== 'all' ? clinicId : null;
+  try {
+    const [patients, apts] = await Promise.all([
+      fetchAllRows((a, b) => {
+        let q = sb.from('patients').select('id,clinic_id,name,email,phone,status,last_visit_at,created_at,clinicorp_id').order('name').range(a, b);
+        return filterClinic ? q.eq('clinic_id', filterClinic) : q;
+      }),
+      fetchAllRows((a, b) => {
+        let q = sb.from('appointments').select('patient_id,appointment_date,status').not('patient_id', 'is', null).neq('status', 'cancelled').range(a, b);
+        return filterClinic ? q.eq('clinic_id', filterClinic) : q;
+      })
+    ]);
+
+    const today = new Date().toISOString().slice(0, 10);
+    const last = new Map<string, string>();
+    const next = new Map<string, string>();
+    apts.forEach((x: any) => {
+      const d = String(x.appointment_date).slice(0, 10);
+      if (d <= today) { if (!last.get(x.patient_id) || d > last.get(x.patient_id)!) last.set(x.patient_id, d); }
+      else if (!next.get(x.patient_id) || d < next.get(x.patient_id)!) next.set(x.patient_id, d);
+    });
+
+    return patients.map((r: any) => ({
+      id: r.id,
+      name: r.name || '',
+      email: r.email || '',
+      phone: r.phone || '',
+      lastVisit: last.get(r.id) || (r.last_visit_at ? String(r.last_visit_at).slice(0, 10) : ''),
+      nextAppointment: next.get(r.id),
+      status: r.status === 'inactive' ? 'inactive' : 'active',
+      clinicId: r.clinic_id,
+      fromClinicorp: Boolean(r.clinicorp_id)
+    }));
+  } catch (e: any) {
+    console.error('Erro ao carregar pacientes do Supabase:', e?.message);
+    return null;
+  }
+}
+
+export async function insertPatientInDb(p: { id: string; clinicId: string; name: string; email?: string; phone: string }): Promise<boolean> {
+  const sb = getSupabase();
+  if (!sb) return true;
+  const { error } = await sb.from('patients').insert([{ id: p.id, clinic_id: p.clinicId, name: p.name, email: p.email || null, phone: p.phone || '' }]);
+  if (error) console.error('Erro ao cadastrar paciente no Supabase:', error.message);
+  return !error;
+}
+
+// ---------------------------------------------------------------------
 // Agenda: agendamentos e profissionais
 // ---------------------------------------------------------------------
 

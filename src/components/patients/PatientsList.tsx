@@ -16,6 +16,7 @@ import PatientProfile from './PatientProfile';
 import NewPatientModal from './NewPatientModal';
 import { exportToCSV } from '../../lib/exportUtils';
 import { useApp } from '../../context/AppContext';
+import { fetchPatientsFromDb, insertPatientInDb, isSupabaseConfigured, newUuid } from '../../lib/supabase';
 
 interface Patient {
   id: string;
@@ -25,11 +26,21 @@ interface Patient {
   lastVisit: string;
   nextAppointment?: string;
   status: 'active' | 'inactive';
+  clinicId?: string;
+  fromClinicorp?: boolean;
 }
 
+const fmtDate = (d?: string) => {
+  if (!d) return '—';
+  const t = new Date(d.length === 10 ? `${d}T12:00:00` : d);
+  return isNaN(t.getTime()) ? '—' : t.toLocaleDateString('pt-BR');
+};
+
 export default function PatientsList() {
-  const { addToast, setSubPage, subPage, subPageData, currentClinic } = useApp();
+  const { addToast, setSubPage, subPage, subPageData, currentClinic, currentClinicId, clinics } = useApp();
+  const [loading, setLoading] = useState(isSupabaseConfigured());
   const [patients, setPatients] = useState<Patient[]>(() => {
+    if (isSupabaseConfigured()) return [];
     try {
       const saved = localStorage.getItem('crm_patients_data');
       if (saved) return JSON.parse(saved);
@@ -38,11 +49,26 @@ export default function PatientsList() {
     }
     return [];
   });
+  // Com Supabase, a lista vem da tabela patients (separada de leads), filtrada pela clínica escolhida
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+    let cancelled = false;
+    setLoading(true);
+    fetchPatientsFromDb(currentClinicId).then(list => {
+      if (cancelled) return;
+      if (list) setPatients(list as Patient[]);
+      else addToast('Não foi possível carregar os pacientes do banco de dados.', 'error');
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [currentClinicId]);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [isNewPatientModalOpen, setIsNewPatientModalOpen] = useState(false);
 
   const savePatients = (list: Patient[]) => {
     setPatients(list);
+    if (isSupabaseConfigured()) return; // com o banco ativo, ele é a fonte da verdade
     try {
       localStorage.setItem('crm_patients_data', JSON.stringify(list));
       window.dispatchEvent(new Event('crm_patients_updated'));
@@ -63,7 +89,7 @@ export default function PatientsList() {
       Email: p.email || '',
       Telefone: p.phone || '',
       Status: p.status === 'active' ? 'Ativo' : 'Inativo',
-      UltimaVisita: new Date(p.lastVisit).toLocaleDateString('pt-BR'),
+      UltimaVisita: fmtDate(p.lastVisit),
       Unidade: currentClinic?.name || 'Todas as Unidades'
     }));
     exportToCSV(dataToExport, `pacientes_${currentClinic?.name?.toLowerCase().replace(/\s+/g, '_') || 'geral'}`);
@@ -71,20 +97,30 @@ export default function PatientsList() {
   };
 
   const handleAddPatient = (patientData: any) => {
+    const targetClinic = clinics.find(c => c.id === currentClinicId) || clinics[0];
     const newP: Patient = {
       ...patientData,
-      id: String(Date.now()),
-      lastVisit: new Date().toISOString(),
-      status: 'active'
+      id: isSupabaseConfigured() ? newUuid() : String(Date.now()),
+      lastVisit: '',
+      status: 'active',
+      clinicId: targetClinic?.id
     };
-    const updated = [newP, ...patients];
-    savePatients(updated);
+    setPatients([newP, ...patients]);
+    if (isSupabaseConfigured()) {
+      insertPatientInDb({ id: newP.id, clinicId: targetClinic?.id || '', name: newP.name, email: newP.email, phone: newP.phone }).then(ok => {
+        if (!ok) addToast(`"${newP.name}" não foi salvo no banco de dados. Tente novamente.`, 'error');
+        else addToast(`Paciente "${newP.name}" cadastrado com sucesso!`, 'success');
+      });
+      return;
+    }
+    savePatients([newP, ...patients]);
     addToast(`Paciente "${newP.name}" cadastrado com sucesso!`, 'success');
   };
 
   const filteredPatients = patients.filter(p => 
-    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.email.toLowerCase().includes(searchTerm.toLowerCase())
+    (p.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (p.email || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (p.phone || '').replace(/\D/g, '').includes(searchTerm.replace(/\D/g, '') || '\u0000')
   );
 
   const handleOpenDetail = (patient: any) => {
@@ -108,7 +144,9 @@ export default function PatientsList() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-black text-[var(--color-text-primary)] tracking-tight">Pacientes</h1>
-          <p className="text-sm text-[var(--color-text-muted)] mt-1">Gerencie sua base de pacientes ativos e histórico clínico.</p>
+          <p className="text-sm text-[var(--color-text-muted)] mt-1">
+            {loading ? 'Carregando pacientes...' : `${filteredPatients.length} paciente${filteredPatients.length === 1 ? '' : 's'}${currentClinic && currentClinicId !== 'all' ? ` em ${currentClinic.name}` : ' na rede'}. Leads ficam no Pipeline.`}
+          </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button 
@@ -167,6 +205,9 @@ export default function PatientsList() {
                         <User size={16} />
                       </div>
                       <span className="text-sm font-bold text-[var(--color-text-primary)]">{patient.name}</span>
+                      {patient.fromClinicorp && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-[var(--color-primary-blue)]/10 text-[var(--color-primary-blue)]">Clinicorp</span>
+                      )}
                     </div>
                   </td>
                   <td className="px-6 py-4">
@@ -183,8 +224,11 @@ export default function PatientsList() {
                   </td>
                   <td className="px-6 py-4">
                     <span className="text-xs text-[var(--color-text-muted)] font-medium">
-                      {new Date(patient.lastVisit).toLocaleDateString('pt-BR')}
+                      {fmtDate(patient.lastVisit)}
                     </span>
+                    {patient.nextAppointment && (
+                      <span className="block text-[10px] text-[var(--color-primary-blue)] font-bold mt-0.5">Próxima: {fmtDate(patient.nextAppointment)}</span>
+                    )}
                   </td>
                   <td className="px-6 py-4">
                     <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border ${
@@ -214,7 +258,7 @@ export default function PatientsList() {
             </tbody>
           </table>
 
-          {filteredPatients.length === 0 && (
+          {!loading && filteredPatients.length === 0 && (
             <div className="p-12 text-center">
               <div className="w-12 h-12 rounded-[var(--radius-panel)] bg-[var(--color-surface-sunken)] text-[var(--color-text-faint)] mx-auto flex items-center justify-center mb-3 border border-[var(--color-border-default)]">
                 <User size={24} />
