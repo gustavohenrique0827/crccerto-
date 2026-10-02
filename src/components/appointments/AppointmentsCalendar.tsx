@@ -828,8 +828,10 @@ export default function AppointmentsCalendar() {
   return (
     <div className="h-full flex flex-col space-y-4 max-w-[1700px] mx-auto">
       {/* Top Clinicorp-Style Bar */}
-      <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
-        <div className="flex items-center gap-3 flex-wrap">
+      <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col gap-3 shrink-0">
+        {/* Linha 1: navegação de data à esquerda, modo de exibição à direita */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
           {/* Hoje button */}
           <button
             onClick={handleJumpToToday}
@@ -900,31 +902,7 @@ export default function AppointmentsCalendar() {
             <RotateCw size={14} />
           </button>
 
-          {/* Search bar */}
-          <div className="relative flex-1 sm:flex-initial">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
-            <input 
-              type="text" 
-              placeholder="Buscar pacientes..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-8 pr-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 outline-none w-full sm:w-56 md:w-72 transition-all dark:text-white"
-            />
           </div>
-        </div>
-
-        {/* View mode toggle + Agendar */}
-        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-          {/* Visual Conflict Summary Badge */}
-          {totalConflicts > 0 && (
-            <div 
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 rounded-xl border border-rose-200 dark:border-rose-800 text-xs font-bold shadow-xs animate-pulse"
-              title="Existem agendamentos sobrepostos ou no mesmo horário para o mesmo profissional/unidade"
-            >
-              <AlertTriangle size={14} className="text-rose-600 shrink-0" />
-              <span>{totalConflicts} Conflito{totalConflicts > 1 ? 's' : ''} de Horário</span>
-            </div>
-          )}
 
           <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
             {(['day', 'week', 'month', 'custom'] as const).map((mode) => (
@@ -942,6 +920,34 @@ export default function AppointmentsCalendar() {
               </button>
             ))}
           </div>
+
+        </div>
+
+        {/* Linha 2: busca à esquerda; alertas, Google, exportar e Agendar à direita */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+          {/* Search bar */}
+          <div className="relative w-full sm:w-72 md:w-80">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
+            <input 
+              type="text" 
+              placeholder="Buscar pacientes..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 outline-none w-full transition-all dark:text-white"
+            />
+          </div>
+
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          {/* Visual Conflict Summary Badge */}
+          {totalConflicts > 0 && (
+            <div 
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 rounded-xl border border-rose-200 dark:border-rose-800 text-xs font-bold shadow-xs animate-pulse"
+              title="Existem agendamentos sobrepostos ou no mesmo horário para o mesmo profissional/unidade"
+            >
+              <AlertTriangle size={14} className="text-rose-600 shrink-0" />
+              <span>{totalConflicts} Conflito{totalConflicts > 1 ? 's' : ''} de Horário</span>
+            </div>
+          )}
 
           {/* Google Calendar Sync Button & Quick Pull */}
           <div className="flex items-center gap-1.5">
@@ -1053,6 +1059,7 @@ export default function AppointmentsCalendar() {
             <Plus size={16} />
             <span>Agendar</span>
           </button>
+          </div>
         </div>
       </div>
 
