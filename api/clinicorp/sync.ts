@@ -18,7 +18,8 @@ const CLINICORP_BASE = 'https://api.clinicorp.com/rest/v1';
 interface Req { method?: string; headers: Record<string, string | string[] | undefined>; body?: any; query?: Record<string, any> }
 interface Res { status: (c: number) => Res; json: (b: unknown) => void }
 
-const env = (k: string) => process.env[k] || '';
+// trim: valores colados no painel do Vercel costumam vir com quebra de linha no final
+const env = (k: string) => (process.env[k] || '').trim();
 const fail = (res: Res, code: number, message: string) => res.status(code).json({ ok: false, message });
 
 async function clinicorpGet(path: string, params: Record<string, string> = {}) {
