@@ -63,9 +63,11 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
   const lead = useMemo(() => (leadProp ? ({ ...leadProp, ...overrides } as Lead) : null), [leadProp, overrides]);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
 
   useEffect(() => {
     setOverrides({});
+    setIsEditing(false);
   }, [leadProp?.id]);
 
   useEffect(() => {
@@ -106,10 +108,29 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
     setSaving(false);
     if (ok) {
       setOverrides(prev => ({ ...prev, ...updates }));
+      setIsEditing(false);
       addToast('Dados do lead atualizados.', 'success');
     } else {
       addToast('Não foi possível salvar as alterações no banco de dados.', 'error');
     }
+  };
+
+  const handleCancelEdit = () => {
+    if (!lead) return;
+    setDraft({
+      name: lead.name || '',
+      whatsapp: lead.whatsapp || '',
+      phone: lead.phone || '',
+      email: lead.email || '',
+      birthDate: lead.birthDate ? String(lead.birthDate).slice(0, 10) : '',
+      cpf: lead.cpf || '',
+      cep: lead.cep || '',
+      address: lead.address || '',
+      procedureType: lead.procedureType || '',
+      sourceId: lead.sourceId || '',
+      estimatedValue: lead.estimatedValue ? String(lead.estimatedValue) : ''
+    });
+    setIsEditing(false);
   };
 
   const clinicName = lead ? (clinics.find(c => c.id === lead.clinicId)?.name || 'Clínica não identificada') : '';
@@ -390,7 +411,7 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
     { id: 'history', label: 'Histórico', icon: History },
     { id: 'tasks', label: 'Tarefas', icon: CalendarCheck },
     { id: 'plan', label: 'Plano', icon: ClipboardList },
-    { id: 'procedures', label: 'Clínico', icon: Stethoscope },
+    { id: 'procedures', label: 'Origem', icon: Target },
     { id: 'docs', label: 'Docs', icon: FileText },
     { id: 'ai', label: 'IA', icon: Sparkles },
   ] as const;
@@ -527,15 +548,31 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
                       <div className="flex items-center justify-between gap-2">
                         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
                           <User size={14} className="text-blue-500" />
-                          Informações Cadastrais (editável)
+                          Informações cadastrais
                         </h3>
-                        {isDirty && (
+                        {isEditing ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={handleCancelEdit}
+                              disabled={saving}
+                              className="px-3 py-1.5 rounded-lg text-[11px] font-bold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              onClick={handleSaveProfile}
+                              disabled={saving || !isDirty}
+                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
+                            >
+                              {saving ? 'Salvando...' : 'Salvar'}
+                            </button>
+                          </div>
+                        ) : (
                           <button
-                            onClick={handleSaveProfile}
-                            disabled={saving}
-                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-lg text-[11px] font-bold transition-colors"
+                            onClick={() => setIsEditing(true)}
+                            className="px-3 py-1.5 rounded-lg text-[11px] font-bold border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors cursor-pointer"
                           >
-                            {saving ? 'Salvando...' : 'Salvar alterações'}
+                            Editar
                           </button>
                         )}
                       </div>
@@ -543,40 +580,40 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Nome Completo</span>
-                          <input type="text" value={draft.name ?? ''} onChange={e => setDraft(d => ({ ...d, name: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                          <input type="text" value={draft.name ?? ''} onChange={e => setDraft(d => ({ ...d, name: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
                         </label>
                         <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">WhatsApp</span>
-                          <input type="tel" value={draft.whatsapp ?? ''} onChange={e => setDraft(d => ({ ...d, whatsapp: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                          <input type="tel" value={draft.whatsapp ?? ''} onChange={e => setDraft(d => ({ ...d, whatsapp: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
                         </label>
                         <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Telefone</span>
-                          <input type="tel" value={draft.phone ?? ''} onChange={e => setDraft(d => ({ ...d, phone: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                          <input type="tel" value={draft.phone ?? ''} onChange={e => setDraft(d => ({ ...d, phone: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
                         </label>
                         <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">E-mail</span>
-                          <input type="email" value={draft.email ?? ''} onChange={e => setDraft(d => ({ ...d, email: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                          <input type="email" value={draft.email ?? ''} onChange={e => setDraft(d => ({ ...d, email: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
                         </label>
                         <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Data de Nascimento</span>
-                          <input type="date" value={draft.birthDate ?? ''} onChange={e => setDraft(d => ({ ...d, birthDate: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                          <input type="date" value={draft.birthDate ?? ''} onChange={e => setDraft(d => ({ ...d, birthDate: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
                         </label>
                         <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">CPF</span>
-                          <input type="text" value={draft.cpf ?? ''} onChange={e => setDraft(d => ({ ...d, cpf: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                          <input type="text" value={draft.cpf ?? ''} onChange={e => setDraft(d => ({ ...d, cpf: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
                         </label>
                         <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">CEP</span>
-                          <input type="text" value={draft.cep ?? ''} onChange={e => setDraft(d => ({ ...d, cep: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                          <input type="text" value={draft.cep ?? ''} onChange={e => setDraft(d => ({ ...d, cep: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
                         </label>
                         <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Procedimento de interesse</span>
-                          <input type="text" value={draft.procedureType ?? ''} onChange={e => setDraft(d => ({ ...d, procedureType: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                          <input type="text" value={draft.procedureType ?? ''} onChange={e => setDraft(d => ({ ...d, procedureType: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
                         </label>
                       </div>
                         <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Endereço Completo</span>
-                          <input type="text" value={draft.address ?? ''} onChange={e => setDraft(d => ({ ...d, address: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                          <input type="text" value={draft.address ?? ''} onChange={e => setDraft(d => ({ ...d, address: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
                         </label>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -586,7 +623,7 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
                         </div>
                         <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Origem / Canal</span>
-                          <select value={draft.sourceId ?? ''} onChange={e => setDraft(d => ({ ...d, sourceId: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none">
+                          <select value={draft.sourceId ?? ''} disabled={!isEditing} onChange={e => setDraft(d => ({ ...d, sourceId: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none disabled:appearance-none disabled:cursor-default">
                             {draft.sourceId && !SOURCE_OPTIONS.includes(draft.sourceId) && <option value={draft.sourceId}>{draft.sourceId}</option>}
                             {SOURCE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
                           </select>
@@ -594,7 +631,7 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
                       </div>
                         <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Valor estimado (R$)</span>
-                          <input type="number" value={draft.estimatedValue ?? ''} onChange={e => setDraft(d => ({ ...d, estimatedValue: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none focus:text-blue-600" />
+                          <input type="number" value={draft.estimatedValue ?? ''} onChange={e => setDraft(d => ({ ...d, estimatedValue: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
                         </label>
 
                       {lead?.tags && lead.tags.length > 0 && (
@@ -861,61 +898,47 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
                     initial={{ opacity: 0, x: 10 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -10 }}
-                    className="space-y-6"
+                    className="space-y-4"
                   >
-                    <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 overflow-hidden shadow-sm">
-                      <div className="p-4 bg-slate-50 dark:bg-slate-900/50 flex items-center justify-between">
-                        <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Evolução Clínica</h3>
-                        <button className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">Nova Evolução</button>
-                      </div>
-                      <div className="p-8 text-center text-slate-400">
-                        <Stethoscope size={32} className="mx-auto mb-2 opacity-30" />
-                        <p className="text-xs font-bold text-slate-600 dark:text-slate-300">Nenhuma evolução clínica registrada</p>
-                        <p className="text-[10px] text-slate-400 mt-1">Os registros odontológicos e anotações médicas aparecerão aqui.</p>
-                      </div>
-                    </div>
-
-                    <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm">
-                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                        <PieChartIcon size={14} className="text-indigo-500" />
-                        Origem de Captação
+                    <div className="bg-slate-50 dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-4">
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                        <Target size={14} className="text-blue-500" />
+                        Origem de captação
                       </h3>
-                      <div className="h-[160px] relative">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Pie
-                              data={[
-                                { name: 'Instagram', value: 70, color: '#3b82f6' },
-                                { name: 'Indicação', value: 30, color: '#10b981' },
-                              ]}
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={40}
-                              outerRadius={55}
-                              paddingAngle={5}
-                              dataKey="value"
-                            >
-                              {[
-                                { name: 'Instagram', value: 70, color: '#3b82f6' },
-                                { name: 'Indicação', value: 30, color: '#10b981' },
-                              ].map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={entry.color} />
-                              ))}
-                            </Pie>
-                            <Tooltip 
-                              contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '10px' }}
-                            />
-                          </PieChart>
-                        </ResponsiveContainer>
-                        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                          <span className="text-lg font-bold text-slate-900 dark:text-white">Ads</span>
-                          <span className="text-[8px] text-slate-400 font-bold uppercase">Source</span>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 -mt-2">De qual anúncio ou canal este contato chegou.</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Canal de captação</span>
+                          <span className="text-xs font-bold text-slate-800 dark:text-white break-words">{lead.sourceId || 'Não informado'}</span>
+                        </div>
+                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Campanha</span>
+                          <span className="text-xs font-bold text-slate-800 dark:text-white break-words">{lead.utmCampaign || lead.campaignId || 'Não informado'}</span>
+                        </div>
+                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Mídia / formato</span>
+                          <span className="text-xs font-bold text-slate-800 dark:text-white break-words">{lead.utmMedium || lead.sourceMedium || 'Não informado'}</span>
+                        </div>
+                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Anúncio / conteúdo</span>
+                          <span className="text-xs font-bold text-slate-800 dark:text-white break-words">{lead.utmContent || 'Não informado'}</span>
+                        </div>
+                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Palavra-chave</span>
+                          <span className="text-xs font-bold text-slate-800 dark:text-white break-words">{lead.utmTerm || 'Não informado'}</span>
+                        </div>
+                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Página de origem</span>
+                          <span className="text-xs font-bold text-slate-800 dark:text-white break-words">{lead.referralUrl || 'Não informado'}</span>
+                        </div>
+                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Entrou em</span>
+                          <span className="text-xs font-bold text-slate-800 dark:text-white">{lead.createdAt ? new Date(lead.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Não informado'}</span>
                         </div>
                       </div>
                     </div>
                   </motion.div>
                 )}
-
                 {activeTab === 'docs' && (
                   <motion.div
                     key="docs"
