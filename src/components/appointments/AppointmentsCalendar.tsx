@@ -1413,7 +1413,7 @@ export default function AppointmentsCalendar() {
           )}
           // Semana: o quadro tem altura própria e só a grade de horários rola. Assim o cabeçalho com
           // os dias fica sempre visível e cada card continua ligado à sua coluna.
-          style={viewMode === 'week' || viewMode === 'day' ? { height: 'calc(100vh - 18rem)', minHeight: 480 } : undefined}
+          style={viewMode === 'week' || viewMode === 'day' ? { height: 'calc(100vh - 262px)', minHeight: 560 } : undefined}
         >
           {/* Abas de profissionais: a agenda de cada um em tamanho legível */}
           {(viewMode === 'week' || viewMode === 'day') && (() => {
