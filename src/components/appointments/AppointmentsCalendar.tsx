@@ -1393,7 +1393,15 @@ export default function AppointmentsCalendar() {
         </div>
 
         {/* Right Main Area: Interactive Schedule Views */}
-        <div className="flex-1 min-w-0 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col overflow-hidden">
+        <div
+          className={cn(
+            "flex-1 min-w-0 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col overflow-hidden",
+            viewMode === 'week' && "self-start"
+          )}
+          // Semana: o quadro tem altura própria e só a grade de horários rola. Assim o cabeçalho com
+          // os dias fica sempre visível e cada card continua ligado à sua coluna.
+          style={viewMode === 'week' ? { height: 'calc(100vh - 18rem)', minHeight: 480 } : undefined}
+        >
           {/* 1. WEEK VIEW (Clinicorp standard 7-day columns) */}
           {viewMode === 'week' && (
             <div className="flex-1 flex flex-col overflow-hidden">
