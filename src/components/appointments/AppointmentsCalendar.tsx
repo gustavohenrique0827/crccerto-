@@ -77,7 +77,9 @@ export interface Appointment {
   source?: 'crm' | 'google_calendar';
 }
 
-const HOUR_PX = 64; // altura de 1 hora na visão semanal
+const HOUR_PX = 72; // altura de 1 hora na visão semanal
+const MIN_CARD_PX = 22; // altura mínima legível de um card
+const MIN_LAYOUT_MIN = Math.ceil((MIN_CARD_PX / HOUR_PX) * 60); // minutos que um card curto ocupa de fato
 
 const timeToMinutes = (t: string) => {
   const [h, m] = String(t || '00:00').split(':').map(Number);
@@ -86,21 +88,45 @@ const timeToMinutes = (t: string) => {
 const minutesToTime = (min: number) =>
   `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 
-/** Distribui os agendamentos de um dia em "faixas" lado a lado quando os horários se sobrepõem. */
-function layoutDayAppointments(apts: Appointment[]): Array<{ apt: Appointment; start: number; end: number; lane: number; lanes: number }> {
-  type Item = { apt: Appointment; start: number; end: number; lane: number; lanes: number };
-  const items: Item[] = apts
-    .map((apt): Item => {
+/** Cor estável por profissional (matiz derivado do nome): separa as agendas que correm em paralelo. */
+const profHue = (name?: string) => {
+  let h = 0;
+  for (const ch of String(name || '')) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return h;
+};
+const profColors = (name?: string) => {
+  const h = profHue(name);
+  return { border: `hsl(${h} 62% 42%)`, bg: `hsl(${h} 70% 48% / 0.16)` };
+};
+
+type DayItem = { apt: Appointment; start: number; end: number; realEnd: number; lane: number; lanes: number; span: number };
+
+/** Distribui os agendamentos de um dia em "faixas" lado a lado; cada card ocupa as faixas livres à direita. */
+function layoutDayAppointments(apts: Appointment[]): DayItem[] {
+  const items: DayItem[] = apts
+    .map((apt): DayItem => {
       const start = timeToMinutes(apt.time);
-      return { apt, start, end: start + Math.max(Number(apt.duration) || 30, 15), lane: 0, lanes: 1 };
+      const duration = Math.max(Number(apt.duration) || 30, 5);
+      // `end` é o espaço realmente ocupado na tela (inclui a altura mínima); `realEnd` é o horário de término
+      return { apt, start, end: start + Math.max(duration, MIN_LAYOUT_MIN), realEnd: start + duration, lane: 0, lanes: 1, span: 1 };
     })
     .sort((a, b) => a.start - b.start || a.end - b.end);
 
-  let cluster: Item[] = [];
+  let cluster: DayItem[] = [];
   let clusterEnd = -1;
   const laneEnds: number[] = [];
   const closeCluster = () => {
-    cluster.forEach(i => { i.lanes = laneEnds.length || 1; });
+    const lanes = laneEnds.length || 1;
+    cluster.forEach(it => {
+      it.lanes = lanes;
+      let span = 1;
+      for (let l = it.lane + 1; l < lanes; l++) {
+        const blocked = cluster.some(o => o !== it && o.lane === l && o.start < it.end && it.start < o.end);
+        if (blocked) break;
+        span++;
+      }
+      it.span = span;
+    });
     cluster = [];
     laneEnds.length = 0;
   };
@@ -864,6 +890,16 @@ export default function AppointmentsCalendar() {
     return days;
   }, [selectedDate]);
 
+  // Conflitos só do período que está na tela (e sem contar cancelados)
+  const [rangeStart, rangeEnd] =
+    viewMode === 'day' ? [formatDateStr(selectedDate), formatDateStr(selectedDate)]
+    : viewMode === 'week' ? [formatDateStr(weekDays[0]), formatDateStr(weekDays[6])]
+    : viewMode === 'month' ? [formatDateStr(monthDays[0].date), formatDateStr(monthDays[monthDays.length - 1].date)]
+    : [customStartDate, customEndDate];
+  const visibleConflicts = filteredAppointments.filter(
+    a => a.status !== 'cancelled' && a.date >= rangeStart && a.date <= rangeEnd && conflictMap.get(a.id)?.hasConflict
+  ).length;
+
   return (
     <div className="h-full flex flex-col space-y-4 max-w-[1700px] mx-auto">
       {/* Top Clinicorp-Style Bar */}
@@ -978,13 +1014,13 @@ export default function AppointmentsCalendar() {
 
           <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           {/* Visual Conflict Summary Badge */}
-          {totalConflicts > 0 && (
+          {visibleConflicts > 0 && (
             <div 
               className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 rounded-xl border border-rose-200 dark:border-rose-800 text-xs font-bold shadow-xs animate-pulse"
               title="Existem agendamentos sobrepostos ou no mesmo horário para o mesmo profissional/unidade"
             >
               <AlertTriangle size={14} className="text-rose-600 shrink-0" />
-              <span>{totalConflicts} Conflito{totalConflicts > 1 ? 's' : ''} de Horário</span>
+              <span>{visibleConflicts} Conflito{visibleConflicts > 1 ? 's' : ''} neste período</span>
             </div>
           )}
 
@@ -1266,7 +1302,10 @@ export default function AppointmentsCalendar() {
                       : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50"
                   )}
                 >
-                  <span className="truncate">{prof}</span>
+                  <span className="truncate flex items-center gap-2">
+                    {prof !== 'Todos' && <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: profColors(prof).border }} />}
+                    {prof}
+                  </span>
                   {selectedProfessional === prof && <div className="w-1.5 h-1.5 rounded-full bg-blue-600" />}
                 </button>
               ))}
@@ -1368,7 +1407,7 @@ export default function AppointmentsCalendar() {
                 {weekDays.map((day, idx) => {
                   const dateStr = formatDateStr(day);
                   const isToday = dateStr === todayStr;
-                  const dayApts = filteredAppointments.filter(a => a.date === dateStr);
+                  const dayApts = filteredAppointments.filter(a => a.date === dateStr && (selectedStatusFilter === 'cancelled' || a.status !== 'cancelled'));
                   
                   return (
                     <div 
@@ -1408,7 +1447,9 @@ export default function AppointmentsCalendar() {
 
               {/* Grade contínua: 1 coluna por dia; cada card é posicionado pelo horário e a altura segue a duração */}
               {(() => {
-                const weekApts = weekDays.flatMap(d => filteredAppointments.filter(a => a.date === formatDateStr(d)));
+                // Cancelados não ocupam horário: só aparecem se o filtro de status for "Cancelado"
+                const gridApts = filteredAppointments.filter(a => selectedStatusFilter === 'cancelled' || a.status !== 'cancelled');
+                const weekApts = weekDays.flatMap(d => gridApts.filter(a => a.date === formatDateStr(d)));
                 const first = weekApts.length ? Math.min(...weekApts.map(a => Math.floor(timeToMinutes(a.time) / 60))) : 7;
                 const last = weekApts.length ? Math.max(...weekApts.map(a => Math.ceil((timeToMinutes(a.time) + (a.duration || 30)) / 60))) : 21;
                 const gridStart = Math.min(7, first);
@@ -1430,7 +1471,7 @@ export default function AppointmentsCalendar() {
 
                       {weekDays.map((day, dIdx) => {
                         const dateStr = formatDateStr(day);
-                        const dayApts = layoutDayAppointments(filteredAppointments.filter(a => a.date === dateStr));
+                        const dayApts = layoutDayAppointments(gridApts.filter(a => a.date === dateStr));
                         const isToday = dateStr === todayStr;
 
                         return (
@@ -1455,15 +1496,17 @@ export default function AppointmentsCalendar() {
                               <div className="absolute inset-x-0 border-t-2 border-rose-500 z-20 pointer-events-none" style={{ top: ((nowMin - gridStart * 60) / 60) * HOUR_PX }} />
                             )}
 
-                            {dayApts.map(({ apt, start, end, lane, lanes }) => {
+                            {dayApts.map(({ apt, start, end, realEnd, lane, lanes, span }) => {
                               const conf = STATUS_CONFIG[apt.status] || STATUS_CONFIG.pending;
                               const conflictInfo = conflictMap.get(apt.id);
                               const hasConflict = conflictInfo?.hasConflict;
-                              const height = Math.max(((end - start) / 60) * HOUR_PX - 2, 24);
+                              const height = Math.max(((end - start) / 60) * HOUR_PX - 2, MIN_CARD_PX);
                               // Simultâneos ficam lado a lado (como no Clinicorp); com 2+ o card fica compacto
-                              const widthPct = 100 / lanes;
-                              const leftPct = lane * widthPct;
-                              const compact = lanes >= 2;
+                              const widthPct = (100 / lanes) * span;
+                              const leftPct = lane * (100 / lanes);
+                              const compact = widthPct < 60;
+                              const tiny = widthPct < 22;
+                              const pc = profColors(apt.professional);
 
                               return (
                                 <div
@@ -1472,37 +1515,54 @@ export default function AppointmentsCalendar() {
                                     e.stopPropagation();
                                     setSelectedAppointmentDetail(apt);
                                   }}
-                                  title={`${apt.time} – ${minutesToTime(end)} · ${apt.patient} · ${apt.procedure}${apt.professional ? ` · ${apt.professional}` : ''}`}
+                                  title={`${apt.time} – ${minutesToTime(realEnd)} · ${apt.patient} · ${apt.procedure}${apt.professional ? ` · ${apt.professional}` : ''}`}
                                   className={cn(
                                     "appointment-card absolute rounded-lg border-l-4 shadow-2xs overflow-hidden px-1.5 py-1 cursor-pointer hover:shadow-md hover:z-10 transition-shadow",
-                                    hasConflict
-                                      ? "bg-rose-50/95 dark:bg-rose-950/60 border-rose-500 ring-1 ring-rose-400/60"
-                                      : cn(conf.bg, conf.border)
+                                    hasConflict && "ring-1 ring-rose-500",
+                                    apt.status === 'cancelled' && "opacity-50 line-through"
                                   )}
                                   style={{
+                                    background: pc.bg,
+                                    borderLeftColor: hasConflict ? 'rgb(244 63 94)' : pc.border,
                                     top: ((start - gridStart * 60) / 60) * HOUR_PX + 1,
                                     height,
                                     left: `calc(${leftPct}% + 1px)`,
                                     width: `calc(${widthPct}% - 2px)`
                                   }}
                                 >
-                                  <div className="flex items-center justify-between gap-1 leading-none">
-                                    <span className="font-mono text-[9px] font-black text-slate-700 dark:text-slate-300 truncate">
-                                      {compact ? apt.time : `${apt.time}–${minutesToTime(end)}`}
-                                    </span>
-                                    {hasConflict ? (
-                                      <AlertTriangle size={10} className="text-rose-600 dark:text-rose-400 shrink-0" />
-                                    ) : compact ? null : (
-                                      <span className={cn("w-2 h-2 rounded-full shrink-0", conf.color)} title={conf.label} />
-                                    )}
-                                  </div>
-                                  <h4 className="text-[11px] font-bold text-slate-900 dark:text-white mt-0.5 truncate leading-tight">{compact ? String(apt.patient).split(' ')[0] : apt.patient}</h4>
-                                  {height >= 56 && <p className="text-[9.5px] text-slate-500 dark:text-slate-400 truncate leading-tight">{apt.procedure}</p>}
-                                  {height >= 76 && apt.professional && (
-                                    <div className="flex items-center gap-1 text-[8.5px] text-slate-400 mt-0.5 truncate">
-                                      <Stethoscope size={9} className="shrink-0" />
-                                      <span className="truncate">{apt.professional}</span>
+                                  {height < 36 ? (
+                                    /* Card baixo (agendamento curto): horário e nome na mesma linha */
+                                    <div className="flex items-center gap-1 leading-none h-full">
+                                      {widthPct >= 34 && <span className="font-mono text-[9px] font-black text-slate-700 dark:text-slate-300 shrink-0">{apt.time}</span>}
+                                      <span className="text-[11px] font-bold text-slate-900 dark:text-white truncate">{compact ? String(apt.patient).split(' ')[0] : apt.patient}</span>
+                                      {hasConflict
+                                        ? <AlertTriangle size={10} className="text-rose-600 dark:text-rose-400 shrink-0 ml-auto" />
+                                        : <span className={cn("w-2 h-2 rounded-full shrink-0 ml-auto", conf.color)} title={conf.label} />}
                                     </div>
+                                  ) : (
+                                    <>
+                                  <div className="flex items-center justify-between gap-1 leading-none">
+                                        {!tiny && (
+                                          <span className="font-mono text-[9px] font-black text-slate-700 dark:text-slate-300 truncate">
+                                            {compact ? apt.time : `${apt.time}–${minutesToTime(realEnd)}`}
+                                          </span>
+                                        )}
+                                        {hasConflict ? (
+                                          <AlertTriangle size={10} className="text-rose-600 dark:text-rose-400 shrink-0" />
+                                        ) : (
+                                          <span className={cn("w-2 h-2 rounded-full shrink-0", conf.color)} title={conf.label} />
+                                        )}
+                                      </div>
+                                      <h4 className="text-[11px] font-bold text-slate-900 dark:text-white mt-0.5 truncate leading-tight">{compact ? String(apt.patient).split(' ')[0] : apt.patient}</h4>
+                                      {height >= 56 && <p className="text-[9.5px] text-slate-500 dark:text-slate-400 truncate leading-tight">{apt.procedure}</p>}
+                                      {height >= 76 && apt.professional && (
+                                        <div className="flex items-center gap-1 text-[8.5px] text-slate-400 mt-0.5 truncate">
+                                          <Stethoscope size={9} className="shrink-0" />
+                                          <span className="truncate">{apt.professional}</span>
+                                        </div>
+                                      )}
+    
+                                    </>
                                   )}
                                 </div>
                               );
