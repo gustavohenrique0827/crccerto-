@@ -11,6 +11,8 @@ interface Shortcut {
 export function useKeyboardShortcuts(shortcuts: Shortcut[]) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      // Autofill/autocomplete do navegador dispara keydown sem `key`
+      if (typeof event.key !== 'string') return;
       shortcuts.forEach(shortcut => {
         const keyMatch = event.key.toLowerCase() === shortcut.key.toLowerCase();
         const ctrlMatch = shortcut.ctrl ? (event.ctrlKey || event.metaKey) : true;
