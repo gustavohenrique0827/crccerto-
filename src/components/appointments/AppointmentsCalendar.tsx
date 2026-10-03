@@ -812,6 +812,10 @@ export default function AppointmentsCalendar() {
     return count;
   }, [conflictMap]);
 
+  // Na primeira vez que a semana abre com vários profissionais, começa por um deles (agenda legível);
+  // "Todos os profissionais" continua a um clique.
+  const autoPickedRef = useRef(false);
+
   // Profissionais cadastrados na(s) clínica(s) + quem já aparece em agendamentos
   const [dbProfessionalNames, setDbProfessionalNames] = useState<string[]>([]);
   useEffect(() => {
@@ -825,6 +829,15 @@ export default function AppointmentsCalendar() {
   const professionals = useMemo(() => {
     return ['Todos', ...new Set([...dbProfessionalNames, ...(clinicAppointments || []).map(a => a.professional).filter(Boolean)])];
   }, [clinicAppointments, dbProfessionalNames]);
+
+  useEffect(() => {
+    if (autoPickedRef.current || viewMode !== 'week' || selectedProfessional !== 'Todos' || clinicAppointments.length === 0) return;
+    const counts = new Map<string, number>();
+    clinicAppointments.forEach(a => { if (a.professional && a.status !== 'cancelled') counts.set(a.professional, (counts.get(a.professional) || 0) + 1); });
+    if (counts.size < 3) return;
+    autoPickedRef.current = true;
+    setSelectedProfessional([...counts.entries()].sort((x, y) => y[1] - x[1])[0][0]);
+  }, [clinicAppointments, viewMode, selectedProfessional]);
 
   const handleExport = () => {
     exportToCSV(filteredAppointments, 'agendamentos_agenda');
@@ -1396,12 +1409,46 @@ export default function AppointmentsCalendar() {
         <div
           className={cn(
             "flex-1 min-w-0 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col overflow-hidden",
-            viewMode === 'week' && "self-start"
+            (viewMode === 'week' || viewMode === 'day') && "self-start"
           )}
           // Semana: o quadro tem altura própria e só a grade de horários rola. Assim o cabeçalho com
           // os dias fica sempre visível e cada card continua ligado à sua coluna.
-          style={viewMode === 'week' ? { height: 'calc(100vh - 18rem)', minHeight: 480 } : undefined}
+          style={viewMode === 'week' || viewMode === 'day' ? { height: 'calc(100vh - 18rem)', minHeight: 480 } : undefined}
         >
+          {/* Abas de profissionais: a agenda de cada um em tamanho legível */}
+          {(viewMode === 'week' || viewMode === 'day') && (() => {
+            const rangeDates = viewMode === 'week' ? weekDays.map(d => formatDateStr(d)) : [formatDateStr(selectedDate)];
+            const inRange = clinicAppointments.filter(a => rangeDates.includes(a.date) && a.status !== 'cancelled');
+            const pros = professionals.filter(pn => pn !== 'Todos');
+            if (pros.length < 2) return null;
+            return (
+              <div className="shrink-0 flex items-center gap-2 overflow-x-auto custom-scrollbar px-3 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/60">
+                {['Todos', ...pros].map(pn => {
+                  const count = pn === 'Todos' ? inRange.length : inRange.filter(a => a.professional === pn).length;
+                  const active = selectedProfessional === pn;
+                  const col = pn === 'Todos' ? null : profColors(pn);
+                  return (
+                    <button
+                      key={pn}
+                      onClick={() => setSelectedProfessional(pn)}
+                      className={cn(
+                        "shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-bold transition-all cursor-pointer",
+                        active
+                          ? "text-slate-900 dark:text-white shadow-xs"
+                          : "border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800"
+                      )}
+                      style={active ? { background: col ? col.bg : 'rgba(15,107,120,0.14)', borderColor: col ? col.border : 'rgb(15 107 120)' } : undefined}
+                    >
+                      {col && <span className="w-2.5 h-2.5 rounded-full" style={{ background: col.border }} />}
+                      <span className="max-w-[160px] truncate">{pn === 'Todos' ? 'Todos os profissionais' : pn.split(' ').slice(0, 2).join(' ')}</span>
+                      <span className="text-[10px] font-black opacity-60">{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
           {/* 1. WEEK VIEW (Clinicorp standard 7-day columns) */}
           {viewMode === 'week' && (
             <div className="flex-1 flex flex-col overflow-hidden">
@@ -1704,118 +1751,119 @@ export default function AppointmentsCalendar() {
             </div>
           )}
 
-          {/* 3. DAY VIEW */}
-          {viewMode === 'day' && (
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
-              {HOURS.map((hour) => {
-                const hourStr = `${hour.toString().padStart(2, '0')}:00`;
-                const dateStr = formatDateStr(selectedDate);
-                const aptsInHour = filteredAppointments.filter(a => {
-                  const aptHour = parseInt(a.time.split(':')[0]);
-                  return aptHour === hour && a.date === dateStr;
-                });
+          {/* 3. DAY VIEW: uma coluna por profissional (como a agenda do Clinicorp) */}
+          {viewMode === 'day' && (() => {
+            const dateStr = formatDateStr(selectedDate);
+            const dayAll = filteredAppointments.filter(a => a.date === dateStr && (selectedStatusFilter === 'cancelled' || a.status !== 'cancelled'));
+            const base = selectedProfessional !== 'Todos' ? [selectedProfessional] : professionals.filter(pn => pn !== 'Todos');
+            const extra = Array.from(new Set(dayAll.map(a => a.professional).filter(pn => pn && !base.includes(pn)))) as string[];
+            const hasNone = dayAll.some(a => !a.professional);
+            const names = [...base, ...extra, ...(hasNone ? ['Sem profissional'] : [])];
+            const first = dayAll.length ? Math.min(...dayAll.map(a => Math.floor(timeToMinutes(a.time) / 60))) : 7;
+            const last = dayAll.length ? Math.max(...dayAll.map(a => Math.ceil((timeToMinutes(a.time) + (a.duration || 30)) / 60))) : 21;
+            const gridStart = Math.min(7, first);
+            const gridEnd = Math.max(22, last);
+            const hours = Array.from({ length: gridEnd - gridStart }, (_, i) => gridStart + i);
+            const cols = `60px repeat(${Math.max(names.length, 1)}, minmax(190px, 1fr))`;
+            const isToday = dateStr === todayStr;
+            const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
 
-                return (
-                  <div key={hour} className="flex gap-4 group">
-                    <div className="w-14 pt-2 text-right shrink-0">
-                      <span className="text-xs font-bold text-slate-400 font-mono">{hourStr}</span>
+            if (dayAll.length === 0 && names.length === 0) {
+              return <div className="flex-1 flex items-center justify-center text-sm text-slate-400">Nenhum agendamento neste dia.</div>;
+            }
+
+            return (
+              <div className="flex-1 overflow-auto custom-scrollbar">
+                <div className="min-w-full">
+                  {/* Cabeçalho: um profissional por coluna (fica fixo ao rolar) */}
+                  <div className="grid sticky top-0 z-30 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800" style={{ gridTemplateColumns: cols }}>
+                    <div className="sticky left-0 z-40 p-3 text-[10px] font-bold text-slate-400 uppercase text-center bg-slate-50 dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800">Hora</div>
+                    {names.map(pn => {
+                      const count = dayAll.filter(a => (a.professional || 'Sem profissional') === pn).length;
+                      return (
+                        <div key={pn} className="p-2.5 text-center border-r border-slate-200 dark:border-slate-800 last:border-r-0 min-w-0">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: profColors(pn).border }} />
+                            <span className="text-xs font-bold text-slate-800 dark:text-white truncate">{pn}</span>
+                          </div>
+                          <span className="text-[10px] font-bold text-slate-400">{count} {count === 1 ? 'paciente' : 'pacientes'}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="grid" style={{ gridTemplateColumns: cols, height: hours.length * HOUR_PX }}>
+                    <div className="sticky left-0 z-20 relative border-r border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 select-none">
+                      {hours.map(h => (
+                        <div key={h} className={cn("absolute inset-x-0 text-[10px] font-bold text-slate-400 text-center", h === gridStart ? "pt-1" : "-translate-y-1/2")} style={{ top: (h - gridStart) * HOUR_PX }}>
+                          {String(h).padStart(2, '0')}:00
+                        </div>
+                      ))}
                     </div>
 
-                    <div className="flex-1 min-h-[50px] relative">
-                      <div className="absolute top-4 left-0 right-0 h-px bg-slate-100 dark:bg-slate-800 z-0" />
+                    {names.map(pn => {
+                      const colApts = layoutDayAppointments(dayAll.filter(a => (a.professional || 'Sem profissional') === pn));
+                      return (
+                        <div
+                          key={pn}
+                          onClick={(e) => {
+                            if ((e.target as HTMLElement).closest('.appointment-card')) return;
+                            const y = e.clientY - (e.currentTarget as HTMLElement).getBoundingClientRect().top;
+                            handleOpenSlot(dateStr, minutesToTime(gridStart * 60 + Math.floor((y / HOUR_PX) * 2) * 30));
+                          }}
+                          className="relative border-r border-slate-100 dark:border-slate-800/60 last:border-r-0 cursor-pointer hover:bg-blue-50/20 dark:hover:bg-blue-900/5 transition-colors min-w-0"
+                        >
+                          {hours.map(h => (
+                            <div key={h} className="absolute inset-x-0 border-t border-slate-100 dark:border-slate-800 pointer-events-none" style={{ top: (h - gridStart) * HOUR_PX }} />
+                          ))}
+                          {isToday && nowMin >= gridStart * 60 && nowMin <= gridEnd * 60 && (
+                            <div className="absolute inset-x-0 border-t-2 border-rose-500 z-20 pointer-events-none" style={{ top: ((nowMin - gridStart * 60) / 60) * HOUR_PX }} />
+                          )}
 
-                      {aptsInHour.length > 0 ? (
-                        <div className="space-y-2 relative z-10">
-                          {aptsInHour.map((apt) => {
+                          {colApts.map(({ apt, start, end, realEnd, lane, lanes, span }) => {
                             const conf = STATUS_CONFIG[apt.status] || STATUS_CONFIG.pending;
-                            const conflictInfo = conflictMap.get(apt.id);
-                            const hasConflict = conflictInfo?.hasConflict;
-
+                            const hasConflict = conflictMap.get(apt.id)?.hasConflict;
+                            const pc = profColors(apt.professional);
+                            const height = Math.max(((end - start) / 60) * HOUR_PX - 2, MIN_CARD_PX);
                             return (
-                              <motion.div 
+                              <div
                                 key={apt.id}
-                                initial={{ opacity: 0, scale: 0.98 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                onClick={() => setSelectedAppointmentDetail(apt)}
+                                onClick={(e) => { e.stopPropagation(); setSelectedAppointmentDetail(apt); }}
+                                title={`${apt.time} – ${minutesToTime(realEnd)} · ${apt.patient} · ${apt.procedure}`}
                                 className={cn(
-                                  "p-3.5 rounded-2xl border-l-4 shadow-sm transition-all cursor-pointer hover:shadow-md",
-                                  hasConflict 
-                                    ? "bg-rose-50/90 dark:bg-rose-950/40 border-rose-500 ring-2 ring-rose-400/70"
-                                    : cn(conf.bg, conf.border)
+                                  "appointment-card absolute rounded-lg border-l-4 shadow-2xs overflow-hidden px-2 py-1 cursor-pointer hover:shadow-md hover:z-10 transition-shadow",
+                                  hasConflict && "ring-1 ring-rose-500",
+                                  apt.status === 'cancelled' && "opacity-50 line-through"
                                 )}
+                                style={{
+                                  background: pc.bg,
+                                  borderLeftColor: hasConflict ? 'rgb(244 63 94)' : pc.border,
+                                  top: ((start - gridStart * 60) / 60) * HOUR_PX + 1,
+                                  height,
+                                  left: `calc(${lane * (100 / lanes)}% + 2px)`,
+                                  width: `calc(${(100 / lanes) * span}% - 4px)`
+                                }}
                               >
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 rounded-full bg-white dark:bg-slate-800 flex items-center justify-center border border-slate-200 dark:border-slate-700 shadow-2xs text-slate-600 dark:text-slate-300 font-bold text-xs">
-                                      {apt.patient.split(' ').map(n => n[0]).join('').slice(0, 2)}
-                                    </div>
-                                    <div>
-                                      <div className="flex items-center gap-2">
-                                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">{apt.patient}</h4>
-                                        {hasConflict && (
-                                          <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-rose-200 dark:bg-rose-900/60 text-rose-800 dark:text-rose-200 flex items-center gap-1">
-                                            <AlertTriangle size={10} className="text-rose-600" />
-                                            Conflito
-                                          </span>
-                                        )}
-                                      </div>
-                                      <p className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.5">
-                                        <span className="font-semibold text-blue-600">{apt.procedure}</span>
-                                        <span>•</span>
-                                        <span>{apt.professional}</span>
-                                      </p>
-                                    </div>
-                                  </div>
-
-                                  <div className="flex items-center gap-3">
-                                    <div className="text-right">
-                                      <span className="font-mono text-xs font-bold text-slate-800 dark:text-white">{apt.time}</span>
-                                      <p className="text-[9px] text-slate-400">{apt.duration} min</p>
-                                    </div>
-                                    <GoogleSyncBadge 
-                                      status={getAptSyncStatus(apt)} 
-                                      errorMsg={apt.googleSyncError}
-                                      size="xs"
-                                      onRetry={(e) => {
-                                        e.stopPropagation();
-                                        handleRetryAppointmentSync(apt);
-                                      }}
-                                    />
-                                    <span className={cn("text-[9px] font-bold px-2.5 py-1 rounded-full text-white", conf.color)}>
-                                      {conf.label}
-                                    </span>
-                                  </div>
+                                <div className="flex items-center justify-between gap-1 leading-none">
+                                  <span className="font-mono text-[10px] font-black text-slate-700 dark:text-slate-300 truncate">{apt.time}–{minutesToTime(realEnd)}</span>
+                                  {hasConflict
+                                    ? <AlertTriangle size={11} className="text-rose-600 dark:text-rose-400 shrink-0" />
+                                    : <span className={cn("w-2 h-2 rounded-full shrink-0", conf.color)} title={conf.label} />}
                                 </div>
-
-                                {hasConflict && (
-                                  <div className="mt-2.5 p-2 rounded-xl bg-rose-100/70 dark:bg-rose-900/30 border border-rose-200 dark:border-rose-800 text-[11px] text-rose-800 dark:text-rose-200 flex items-center justify-between">
-                                    <div className="flex items-center gap-1.5">
-                                      <AlertTriangle size={12} className="text-rose-600 shrink-0" />
-                                      <span>Colisão com: <strong>{conflictInfo.conflictingWith.map(c => `${c.patient} (${c.time})`).join(', ')}</strong></span>
-                                    </div>
-                                    <span className="text-[9px] font-bold text-rose-600 dark:text-rose-400 underline cursor-pointer">
-                                      Verificar Horário
-                                    </span>
-                                  </div>
-                                )}
-                              </motion.div>
+                                <h4 className="text-xs font-bold text-slate-900 dark:text-white mt-0.5 truncate leading-tight">{apt.patient}</h4>
+                                {height >= 52 && <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate leading-tight">{apt.procedure}</p>}
+                                {height >= 72 && apt.phone && <p className="text-[10px] text-slate-400 truncate font-mono">{apt.phone}</p>}
+                              </div>
                             );
                           })}
                         </div>
-                      ) : (
-                        <button 
-                          onClick={() => handleOpenSlot(dateStr, hourStr)}
-                          className="w-full h-11 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 hover:border-blue-400 dark:hover:border-blue-600 hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-all flex items-center justify-center text-slate-300 hover:text-blue-600 text-xs font-semibold relative z-10 gap-1"
-                        >
-                          <Plus size={14} /> Horário livre
-                        </button>
-                      )}
-                    </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
-            </div>
-          )}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* 4. CUSTOM VIEW (Personalizado with interactive range calendar, timeline grouping, and metrics) */}
           {viewMode === 'custom' && (
