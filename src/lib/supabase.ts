@@ -636,6 +636,7 @@ export async function deleteLeadNote(noteId: string): Promise<boolean> {
 const INTERACTION_LABEL: Record<string, string> = {
   mensagem_cliente: 'Mensagem do paciente',
   mensagem_responsavel: 'Resposta do atendimento',
+  mudanca_etapa: 'Etapa alterada pela automação',
   message: 'Mensagem'
 };
 
