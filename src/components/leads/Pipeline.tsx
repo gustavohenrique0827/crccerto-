@@ -274,6 +274,7 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
   };
 
   const handleDragStart = (event: DragStartEvent) => {
+    document.body.dataset.crmDragging = '1'; // pausa as atualizações em segundo plano durante o arrasto
     setActiveId(event.active.id as string);
     // Largura real do card/coluna arrastado: a cópia do overlay precisa ter o mesmo tamanho
     const el = document.querySelector(`[data-kanban-card="${String(event.active.id)}"]`);
@@ -281,6 +282,7 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
+    delete document.body.dataset.crmDragging;
     const { active, over } = event;
     setActiveId(null);
 

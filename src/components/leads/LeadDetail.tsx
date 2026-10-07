@@ -43,7 +43,7 @@ import {
 import { Lead } from '@/src/types';
 import { cn } from '@/src/lib/utils';
 import { useApp } from '@/src/context/AppContext';
-import { fetchLeadTimelineFromDb, LeadTimelineItem, updateLeadEverywhere } from '@/src/lib/supabase';
+import { fetchLeadTimelineFromDb, LeadTimelineItem, updateLeadEverywhere, addLeadNote, deleteLeadNote, isSupabaseConfigured, isUuid } from '@/src/lib/supabase';
 
 interface LeadDetailProps {
   isOpen: boolean;
@@ -56,7 +56,7 @@ const SOURCE_OPTIONS = ['Meta Ads', 'Google Ads', 'Instagram', 'Facebook', 'What
 const EDITABLE_FIELDS = ['name', 'whatsapp', 'phone', 'email', 'birthDate', 'cpf', 'cep', 'address', 'procedureType', 'sourceId', 'estimatedValue'] as const;
 
 export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDetailProps) {
-  const { addToast, currentClinic, clinics, setActiveTab: navigateTo } = useApp();
+  const { addToast, currentClinic, clinics, setActiveTab: navigateTo, user } = useApp();
 
   // Alterações salvas na ficha valem imediatamente, mesmo antes de o pai recarregar o lead
   const [overrides, setOverrides] = useState<Partial<Lead>>({});
@@ -194,6 +194,8 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
 
   // Quick Notes State
   const [noteContent, setNoteContent] = useState('');
+  const [noteDate, setNoteDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [savingNote, setSavingNote] = useState(false);
   const [notes, setNotes] = useState<{id: string, text: string, date: string}[]>(() => {
     const saved = localStorage.getItem(`lead_notes_${lead?.id}`);
     return saved ? JSON.parse(saved) : [];
@@ -206,15 +208,50 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
     return saved ? JSON.parse(saved) : [];
   });
 
-  useEffect(() => {
-    if (!isOpen || !lead || activeTab !== 'history') return;
-    let cancelled = false;
+  const reloadTimeline = React.useCallback(async () => {
+    if (!lead) return;
     setTimelineLoading(true);
-    fetchLeadTimelineFromDb(lead)
-      .then(items => { if (!cancelled) setTimeline(items); })
-      .finally(() => { if (!cancelled) setTimelineLoading(false); });
-    return () => { cancelled = true; };
-  }, [isOpen, lead?.id, activeTab]);
+    try {
+      setTimeline(await fetchLeadTimelineFromDb(lead));
+    } finally {
+      setTimelineLoading(false);
+    }
+  }, [lead?.id, lead?.phone, lead?.whatsapp]);
+
+  // Carrega ao abrir a ficha (o contador "Notas" do topo precisa do número certo) e ao entrar no Histórico
+  useEffect(() => {
+    if (!isOpen || !lead) return;
+    reloadTimeline();
+  }, [isOpen, lead?.id, activeTab === 'history', reloadTimeline]);
+
+  const dbNotes = timeline.filter(t => t.kind === 'note');
+  const useDbNotes = isSupabaseConfigured() && isUuid(lead?.id);
+
+  const handleAddNote = async () => {
+    if (!lead || !noteContent.trim()) return;
+    if (!useDbNotes) {
+      saveNote(); // modo demonstração: guarda só neste navegador
+      return;
+    }
+    setSavingNote(true);
+    const ok = await addLeadNote(lead.id, noteContent, noteDate, user?.id);
+    setSavingNote(false);
+    if (ok) {
+      setNoteContent('');
+      setNoteDate(new Date().toISOString().slice(0, 10));
+      addToast('Anotação adicionada ao histórico.', 'success');
+      reloadTimeline();
+    } else {
+      addToast('Não foi possível salvar a anotação no banco de dados.', 'error');
+    }
+  };
+
+  const handleDeleteNote = async (noteId?: string) => {
+    if (!noteId) return;
+    const ok = await deleteLeadNote(noteId);
+    addToast(ok ? 'Anotação excluída.' : 'Não foi possível excluir a anotação.', ok ? 'info' : 'error');
+    if (ok) reloadTimeline();
+  };
 
   useEffect(() => {
     if (lead) {
@@ -506,7 +543,7 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
               </div>
               <div className="p-3 border-r border-slate-100 dark:border-slate-800">
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-0.5">Notas</span>
-                <span className="text-[10px] font-bold text-slate-800 dark:text-slate-200 block">{notes.length}</span>
+                <span className="text-[10px] font-bold text-slate-800 dark:text-slate-200 block">{useDbNotes ? dbNotes.length : notes.length}</span>
               </div>
               <div className="p-3">
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-0.5">Tarefas</span>
@@ -658,6 +695,40 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
                     exit={{ opacity: 0, x: -10 }}
                     className="space-y-8"
                   >
+                    {/* O que foi conversado com o lead: anotação com data, salva no banco */}
+                    <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-3">
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                        <StickyNote size={14} className="text-blue-500" />
+                        Registrar conversa
+                      </h3>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="date"
+                          value={noteDate}
+                          max={new Date().toISOString().slice(0, 10)}
+                          onChange={e => setNoteDate(e.target.value)}
+                          aria-label="Data da conversa"
+                          className="sm:w-40 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                        />
+                        <textarea
+                          value={noteContent}
+                          onChange={e => setNoteContent(e.target.value)}
+                          rows={2}
+                          placeholder="O que foi conversado ou combinado? Ex.: pediu orçamento; combinado retomar contato sexta."
+                          className="flex-1 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500 dark:text-white resize-none"
+                        />
+                      </div>
+                      <div className="flex justify-end">
+                        <button
+                          onClick={handleAddNote}
+                          disabled={savingNote || !noteContent.trim()}
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                        >
+                          {savingNote ? 'Salvando...' : 'Adicionar ao histórico'}
+                        </button>
+                      </div>
+                    </div>
+
                     {/* Combined Timeline: System events + Quick Notes */}
                     <div className="space-y-6">
                       <div className="flex items-center justify-between">
@@ -666,7 +737,7 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
                       
                       <div className="relative border-l-2 border-slate-100 dark:border-slate-800 ml-3 pl-8 space-y-10 py-2">
                         {/* Quick Notes Rendering */}
-                        {(notes || []).map((note) => (
+                        {(useDbNotes ? [] : (notes || [])).map((note) => (
                           <div key={note.id} className="relative group">
                             <div className="absolute -left-[45px] top-0 w-8 h-8 rounded-xl flex items-center justify-center border-4 border-white dark:border-slate-950 shadow-sm transition-transform group-hover:scale-110 bg-blue-50 text-blue-600 dark:bg-blue-900/30">
                               <StickyNote size={14} />
@@ -693,16 +764,27 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
                             <div className={cn(
                               "absolute -left-[45px] top-0 w-8 h-8 rounded-xl flex items-center justify-center border-4 border-white dark:border-slate-950 shadow-sm transition-transform group-hover:scale-110",
                               item.kind === 'client' ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30'
+                                : item.kind === 'note' ? 'text-amber-600 bg-amber-50 dark:bg-amber-900/30'
                                 : item.kind === 'team' ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/30'
                                 : 'text-purple-600 bg-purple-50 dark:bg-purple-900/30'
                             )}>
-                              {item.kind === 'event' ? <Clock size={14} /> : <MessageSquare size={14} />}
+                              {item.kind === 'event' ? <Clock size={14} /> : item.kind === 'note' ? <StickyNote size={14} /> : <MessageSquare size={14} />}
                             </div>
                             <div>
                               <div className="flex items-center justify-between mb-1">
-                                <h4 className="text-sm font-bold text-slate-800 dark:text-white tracking-tight">{item.title}</h4>
-                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                                  {new Date(item.date).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                <h4 className="text-sm font-bold text-slate-800 dark:text-white tracking-tight">
+                                  {item.title}
+                                  {item.author && <span className="ml-1.5 text-[10px] font-semibold text-slate-400 normal-case">por {item.author}</span>}
+                                </h4>
+                                <span className="flex items-center gap-2 text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                                  {item.kind === 'note'
+                                    ? new Date(item.date).toLocaleDateString('pt-BR')
+                                    : new Date(item.date).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                  {item.kind === 'note' && (
+                                    <button onClick={() => handleDeleteNote(item.noteId)} title="Excluir anotação" className="text-slate-300 hover:text-rose-500 transition-colors cursor-pointer">
+                                      <Trash2 size={12} />
+                                    </button>
+                                  )}
                                 </span>
                               </div>
                               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed whitespace-pre-wrap">{item.text || '(mensagem sem texto registrada)'}</p>

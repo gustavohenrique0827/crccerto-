@@ -81,9 +81,11 @@ export default function App() {
 
   const handleAddLead = async (lead: any) => {
     try {
-      await addLead(lead);
-      addToast(`Lead "${lead.name}" cadastrado com sucesso!`, 'success');
-      setIsNewLeadModalOpen(false);
+      const ok = await addLead(lead);
+      if (ok) {
+        addToast(`Lead "${lead.name}" cadastrado com sucesso!`, 'success');
+        setIsNewLeadModalOpen(false);
+      }
     } catch (err: any) {
       addToast(`Erro ao cadastrar lead: ${err.message || 'Tente novamente'}`, 'error');
     }
@@ -169,40 +171,40 @@ export default function App() {
                 transition={{ duration: 0.18 }}
                 className="h-full flex flex-col space-y-4"
               >
-                {subPage === 'lead-detail' ? (
+                {/* O funil continua montado com a ficha aberta por cima: ao fechar, ele está
+                    exatamente onde você deixou (rolagem, coluna, filtros). */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+                  <div>
+                    <h1 className="text-2xl font-black tracking-tight text-[var(--color-text-primary)]">
+                      Funil de CRM & Pipeline
+                    </h1>
+                    <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                      Gestão de etapas comerciais, qualificação de oportunidades e negociações em tempo real.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setIsNewLeadModalOpen(true)}
+                    className="bg-[var(--color-primary-blue)] !text-white px-4 py-2 rounded-[var(--radius-control)] text-xs font-bold shadow-md shadow-[var(--color-primary-blue)]/20 hover:brightness-110 transition-all flex items-center justify-center gap-2 uppercase tracking-wider self-stretch sm:self-auto cursor-pointer"
+                  >
+                    <Plus size={16} />
+                    <span>Novo Lead</span>
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-hidden">
+                  <Pipeline
+                    globalSearchTerm={globalSearchTerm}
+                    selectedClinicId={currentClinicId}
+                    onLeadClick={handleOpenLeadDetail}
+                  />
+                </div>
+
+                {subPage === 'lead-detail' && (
                   <LeadDetail
                     isOpen={true}
                     onClose={() => setSubPage(null)}
                     lead={subPageData}
                   />
-                ) : (
-                  <>
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
-                      <div>
-                        <h1 className="text-2xl font-black tracking-tight text-[var(--color-text-primary)]">
-                          Funil de CRM & Pipeline
-                        </h1>
-                        <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                          Gestão de etapas comerciais, qualificação de oportunidades e negociações em tempo real.
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => setIsNewLeadModalOpen(true)}
-                        className="bg-[var(--color-primary-blue)] !text-white px-4 py-2 rounded-[var(--radius-control)] text-xs font-bold shadow-md shadow-[var(--color-primary-blue)]/20 hover:brightness-110 transition-all flex items-center justify-center gap-2 uppercase tracking-wider self-stretch sm:self-auto cursor-pointer"
-                      >
-                        <Plus size={16} />
-                        <span>Novo Lead</span>
-                      </button>
-                    </div>
-
-                    <div className="flex-1 overflow-hidden">
-                      <Pipeline
-                        globalSearchTerm={globalSearchTerm}
-                        selectedClinicId={currentClinicId}
-                        onLeadClick={handleOpenLeadDetail}
-                      />
-                    </div>
-                  </>
                 )}
               </motion.div>
             ) : activeTab === 'pacientes' ? (

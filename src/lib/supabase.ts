@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Lead, LeadStatus, Clinic, ModuleType } from '../types';
 import { INITIAL_LEADS } from './mockData';
 
@@ -398,7 +398,9 @@ export async function saveLeadToDb(lead: DbLead): Promise<boolean> {
     try {
       const updatedList = [lead, ...readLocalLeads().filter(l => l.id !== lead.id)];
       writeLocalLeads(updatedList);
-      window.dispatchEvent(new CustomEvent('crm_leads_updated', { detail: lead }));
+      // Aparece no funil na hora. O recarregamento do banco só acontece DEPOIS da gravação
+      // (antes ele rodava cedo demais, não achava o lead novo e o apagava da tela).
+      window.dispatchEvent(new CustomEvent('crm_lead_optimistic', { detail: lead }));
     } catch (e) {
       console.error('Error saving lead to localStorage:', e);
     }
@@ -413,11 +415,13 @@ export async function saveLeadToDb(lead: DbLead): Promise<boolean> {
         body: JSON.stringify(lead)
       }).catch(() => {});
     } catch {}
+    window.dispatchEvent(new CustomEvent('crm_leads_updated'));
     return true;
   }
 
   if (!isUuid(lead.id)) {
     console.error('Lead com id inválido para o Supabase:', lead.id);
+    window.dispatchEvent(new CustomEvent('crm_leads_updated'));
     return false;
   }
   const row = leadToRow(lead);
@@ -426,6 +430,8 @@ export async function saveLeadToDb(lead: DbLead): Promise<boolean> {
     ({ error } = await sb.from('leads').upsert([withoutExtraColumns(row)]));
   }
   if (error) console.error('Erro ao salvar lead no Supabase:', error.message);
+  // Gravou (ou falhou): agora sim a lista é recarregada, e some o lead que não foi salvo
+  window.dispatchEvent(new CustomEvent('crm_leads_updated'));
   return !error;
 }
 
@@ -491,10 +497,17 @@ export function useSupabaseLeads(clinicId?: string) {
     return clinicId && clinicId !== 'all' ? local.filter(l => l.clinicId === clinicId) : local;
   });
   const [loading, setLoading] = useState(false);
+  const loadedOnce = useRef(false);
+  const inflight = useRef(0);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  const inScope = useCallback((l: Lead) => !clinicId || clinicId === 'all' || l.clinicId === clinicId, [clinicId]);
+
+  /** `silent`: atualização em segundo plano (sem piscar o funil, sem atrapalhar um arrasto em andamento). */
+  const refresh = useCallback(async (silent = false) => {
+    if (silent && (inflight.current > 0 || document.body.dataset.crmDragging === '1')) return;
+    if (!silent && !loadedOnce.current) setLoading(true);
     const fromDb = await loadLeadsFromDb(clinicId);
+    if (silent && (inflight.current > 0 || document.body.dataset.crmDragging === '1')) return;
     if (fromDb) {
       setLeads(fromDb);
       // O cache completo (usado por outros componentes) só é gravado quando não há filtro
@@ -503,18 +516,21 @@ export function useSupabaseLeads(clinicId?: string) {
       const local = readLocalLeads();
       setLeads(clinicId && clinicId !== 'all' ? local.filter(l => l.clinicId === clinicId) : local);
     }
+    loadedOnce.current = true;
     setLoading(false);
   }, [clinicId]);
 
   const updateLeadStatus = useCallback(async (leadId: string, newStatus: LeadStatus) => {
+    inflight.current++;
     setLeads(prev => prev.map(l => (l.id === leadId ? { ...l, status: newStatus } : l)));
     const all = readLocalLeads().map(l => (l.id === leadId ? { ...l, status: newStatus } : l));
     writeLocalLeads(all);
 
     const ok = await updateLeadInDb(leadId, { status: newStatus });
+    inflight.current--;
     if (!ok) {
       // Não deixa a UI mentir: recarrega o estado real do banco
-      refresh();
+      refresh(true);
       return;
     }
     if (!isSupabaseConfigured()) {
@@ -532,15 +548,44 @@ export function useSupabaseLeads(clinicId?: string) {
   useEffect(() => {
     refresh();
 
-    const handleUpdate = () => refresh();
-    window.addEventListener('crm_leads_updated', handleUpdate);
-    window.addEventListener('storage', handleUpdate);
+    const onOptimistic = (e: Event) => {
+      const lead = (e as CustomEvent).detail as Lead | undefined;
+      if (lead && inScope(lead)) setLeads(prev => [lead, ...prev.filter(l => l.id !== lead.id)]);
+    };
+    const onUpdate = () => refresh(true);
+    const onVisible = () => { if (!document.hidden) refresh(true); };
+
+    window.addEventListener('crm_lead_optimistic', onOptimistic);
+    window.addEventListener('crm_leads_updated', onUpdate);
+    window.addEventListener('storage', onUpdate);
+    window.addEventListener('focus', onUpdate);
+    document.addEventListener('visibilitychange', onVisible);
+
+    // Leads novos e mudanças de etapa feitos por fora (n8n, outro atendente) entram sozinhos:
+    // sondagem a cada 15s + tempo real do Supabase (quando a tabela está na publicação realtime)
+    const timer = window.setInterval(() => { if (!document.hidden) refresh(true); }, 15000);
+    const sb = getSupabase();
+    let debounce: number | undefined;
+    const channel = sb
+      ? sb.channel(`leads-live-${clinicId || 'all'}`)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, () => {
+            window.clearTimeout(debounce);
+            debounce = window.setTimeout(() => refresh(true), 400);
+          })
+          .subscribe()
+      : null;
 
     return () => {
-      window.removeEventListener('crm_leads_updated', handleUpdate);
-      window.removeEventListener('storage', handleUpdate);
+      window.removeEventListener('crm_lead_optimistic', onOptimistic);
+      window.removeEventListener('crm_leads_updated', onUpdate);
+      window.removeEventListener('storage', onUpdate);
+      window.removeEventListener('focus', onUpdate);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.clearInterval(timer);
+      window.clearTimeout(debounce);
+      if (sb && channel) sb.removeChannel(channel);
     };
-  }, [refresh]);
+  }, [refresh, inScope]);
 
   return { leads, loading, refresh, updateLeadStatus };
 }
@@ -551,11 +596,41 @@ export function useSupabaseLeads(clinicId?: string) {
 
 export interface LeadTimelineItem {
   id: string;
-  kind: 'client' | 'team' | 'event';
+  kind: 'client' | 'team' | 'event' | 'note';
   title: string;
   text: string;
   channel: string;
   date: string;
+  /** Só para notas: id em lead_interactions (para excluir) e quem escreveu. */
+  noteId?: string;
+  author?: string;
+}
+
+/** Anotação da equipe sobre a conversa com o lead (aparece no Histórico, com a data escolhida). */
+export async function addLeadNote(leadId: string, text: string, day: string, userId?: string): Promise<boolean> {
+  const sb = getSupabase();
+  if (!sb || !isUuid(leadId)) return false;
+  const today = new Date().toISOString().slice(0, 10);
+  // Data de hoje = agora; outro dia = meio-dia local (evita virar o dia por fuso)
+  const createdAt = day === today ? new Date().toISOString() : new Date(`${day}T12:00:00`).toISOString();
+  const { error } = await sb.from('lead_interactions').insert([{
+    lead_id: leadId,
+    user_id: isUuid(userId) ? userId : null,
+    channel: 'manual',
+    message: text.trim(),
+    interaction_type: 'nota',
+    created_at: createdAt
+  }]);
+  if (error) console.error('Erro ao salvar anotação do lead:', error.message);
+  return !error;
+}
+
+export async function deleteLeadNote(noteId: string): Promise<boolean> {
+  const sb = getSupabase();
+  if (!sb || !isUuid(noteId)) return false;
+  const { error } = await sb.from('lead_interactions').delete().eq('id', noteId).eq('interaction_type', 'nota');
+  if (error) console.error('Erro ao excluir anotação do lead:', error.message);
+  return !error;
 }
 
 const INTERACTION_LABEL: Record<string, string> = {
@@ -578,7 +653,7 @@ export async function fetchLeadTimelineFromDb(lead: Pick<Lead, 'id' | 'phone' | 
   });
 
   const [events, chat] = await Promise.all([
-    sb.from('lead_interactions').select('id,channel,message,interaction_type,created_at').eq('lead_id', lead.id),
+    sb.from('lead_interactions').select('id,channel,message,interaction_type,created_at,user:profiles(full_name)').eq('lead_id', lead.id),
     phones.size > 0
       ? sb.from('interacoes').select('id,telefone,direcao,texto,criado_em').in('telefone', Array.from(phones))
       : Promise.resolve({ data: [] as any[], error: null })
@@ -599,10 +674,13 @@ export async function fetchLeadTimelineFromDb(lead: Pick<Lead, 'id' | 'phone' | 
     });
   });
   (events.data || []).forEach((r: any) => {
+    const isNote = r.interaction_type === 'nota';
     items.push({
       id: `e_${r.id}`,
-      kind: /cliente/.test(r.interaction_type) ? 'client' : /responsavel/.test(r.interaction_type) ? 'team' : 'event',
-      title: INTERACTION_LABEL[r.interaction_type] || r.interaction_type || 'Interação',
+      noteId: isNote ? r.id : undefined,
+      author: isNote ? (r.user?.full_name || undefined) : undefined,
+      kind: isNote ? 'note' : /cliente/.test(r.interaction_type) ? 'client' : /responsavel/.test(r.interaction_type) ? 'team' : 'event',
+      title: isNote ? 'Anotação' : (INTERACTION_LABEL[r.interaction_type] || r.interaction_type || 'Interação'),
       text: r.message || '',
       channel: r.channel || 'whatsapp',
       date: r.created_at
