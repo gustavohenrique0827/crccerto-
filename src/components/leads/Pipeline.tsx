@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Columns, 
   List, 
@@ -19,6 +19,8 @@ import {
   DndContext, 
   DragOverlay, 
   closestCorners, 
+  pointerWithin,
+  CollisionDetection,
   KeyboardSensor, 
   PointerSensor, 
   useSensor, 
@@ -46,16 +48,16 @@ import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 
 const STAGES: { id: LeadStatus; label: string; color: string; bg: string }[] = [
-  { id: LeadStatus.NEW, label: 'Novo lead', color: 'bg-slate-400', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.FIRST_CONTACT, label: '1° contato', color: 'bg-slate-400', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.SECOND_CONTACT, label: '2° contato', color: 'bg-slate-400', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.THIRD_CONTACT, label: '3° contato', color: 'bg-slate-400', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.INTERACTED, label: 'Interagiu', color: 'bg-slate-400', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.APPOINTMENT, label: 'Agendado', color: 'bg-[var(--color-primary-blue)]', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.ATTENDED, label: 'Compareceu', color: 'bg-[var(--color-success)]', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.SOLD, label: 'Comprou', color: 'bg-[var(--color-success)]', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.MISSED, label: 'Faltou', color: 'bg-[var(--color-danger)]', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.DISQUALIFIED, label: 'Desqualificado', color: 'bg-slate-400', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.NEW, label: 'Novo lead', color: 'bg-[var(--stage-0)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.FIRST_CONTACT, label: '1° contato', color: 'bg-[var(--stage-1)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.SECOND_CONTACT, label: '2° contato', color: 'bg-[var(--stage-2)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.THIRD_CONTACT, label: '3° contato', color: 'bg-[var(--stage-3)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.INTERACTED, label: 'Interagiu', color: 'bg-[var(--stage-4)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.APPOINTMENT, label: 'Agendado', color: 'bg-[var(--stage-5)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.ATTENDED, label: 'Compareceu', color: 'bg-[var(--stage-6)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.SOLD, label: 'Comprou', color: 'bg-[var(--stage-7)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.MISSED, label: 'Faltou', color: 'bg-[var(--stage-lost)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.DISQUALIFIED, label: 'Desqualificado', color: 'bg-[var(--stage-void)]', bg: 'bg-[var(--color-surface-sunken)]' },
 ];
 
 const LEAD_SOURCES = [
@@ -97,6 +99,33 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
   const [columnWidth, setColumnWidth] = useState<number>(280);
   const [localSearch, setLocalSearch] = useState('');
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeWidth, setActiveWidth] = useState<number | null>(null);
+  const boardRef = useRef<HTMLDivElement | null>(null);
+
+  // Rolagem horizontal do quadro durante o arrasto: só quando o ponteiro está perto da borda.
+  // (A rolagem automática do dnd-kit disparava com o card no meio da tela.)
+  useEffect(() => {
+    if (!activeId) return;
+    let pointerX: number | null = null;
+    let frame = 0;
+    const onMove = (e: PointerEvent) => { pointerX = e.clientX; };
+    const tick = () => {
+      const board = boardRef.current;
+      if (board && pointerX !== null) {
+        const r = board.getBoundingClientRect();
+        const zone = 80;
+        if (pointerX < r.left + zone) board.scrollLeft -= Math.min(18, (r.left + zone - pointerX) / 4);
+        else if (pointerX > r.right - zone) board.scrollLeft += Math.min(18, (pointerX - (r.right - zone)) / 4);
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    window.addEventListener('pointermove', onMove);
+    frame = requestAnimationFrame(tick);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      cancelAnimationFrame(frame);
+    };
+  }, [activeId]);
   const [focusedLeadId, setFocusedLeadId] = useState<string | null>(null);
 
   const [stageGoals, setStageGoals] = useState<Record<string, StageGoal>>({
@@ -145,6 +174,21 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
       coordinateGetter: sortableKeyboardCoordinates,
     })
   );
+
+  // Arrastar card: ignora as colunas "sortable" (stage-x) e usa a posição do ponteiro,
+  // assim o card cai na coluna/card que está sob o mouse. Arrastar coluna segue usando cantos.
+  const collisionDetection: CollisionDetection = (args) => {
+    const draggingStage = String(args.active.id).startsWith('stage-');
+    if (draggingStage) {
+      return closestCorners({
+        ...args,
+        droppableContainers: args.droppableContainers.filter(c => String(c.id).startsWith('stage-'))
+      });
+    }
+    const cardTargets = args.droppableContainers.filter(c => !String(c.id).startsWith('stage-'));
+    const hits = pointerWithin({ ...args, droppableContainers: cardTargets });
+    return hits.length > 0 ? hits : closestCorners({ ...args, droppableContainers: cardTargets });
+  };
 
   const effectiveSearch = localSearch || globalSearchTerm;
   
@@ -230,10 +274,15 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
   };
 
   const handleDragStart = (event: DragStartEvent) => {
+    document.body.dataset.crmDragging = '1'; // pausa as atualizações em segundo plano durante o arrasto
     setActiveId(event.active.id as string);
+    // Largura real do card/coluna arrastado: a cópia do overlay precisa ter o mesmo tamanho
+    const el = document.querySelector(`[data-kanban-card="${String(event.active.id)}"]`);
+    setActiveWidth(el ? el.getBoundingClientRect().width : null);
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
+    delete document.body.dataset.crmDragging;
     const { active, over } = event;
     setActiveId(null);
 
@@ -259,8 +308,14 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
     const leadId = activeIdStr;
     const overId = overIdStr;
 
-    if (Object.values(LeadStatus).includes(overId as LeadStatus)) {
-      updateLeadStatus(leadId, overId as LeadStatus);
+    const overStatus = overId.replace(/^stage-/, '') as LeadStatus;
+    if (Object.values(LeadStatus).includes(overStatus)) {
+      const current = leads.find(l => l.id === leadId);
+      if (current && current.status !== overStatus) {
+        updateLeadStatus(leadId, overStatus);
+        const stageName = STAGES.find(st => st.id === overStatus)?.label || overStatus;
+        addToast(`Lead movido para "${stageName}"`, 'success');
+      }
       return;
     }
 
@@ -269,6 +324,8 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
 
     if (activeLead && overLead && activeLead.status !== overLead.status) {
       updateLeadStatus(leadId, overLead.status);
+      const stageName = STAGES.find(st => st.id === overLead.status)?.label || overLead.status;
+      addToast(`Lead movido para "${stageName}"`, 'success');
     }
   };
 
@@ -523,11 +580,12 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
         ) : (
           <DndContext
             sensors={sensors}
-            collisionDetection={closestCorners}
+            collisionDetection={collisionDetection}
+            autoScroll={false}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
           >
-            <div className={cn(
+            <div ref={boardRef} className={cn(
               "flex overflow-x-auto pb-6 custom-scrollbar h-full transition-all duration-300",
               columnWidth < 250 ? "gap-3" : "gap-4"
             )}>
@@ -569,18 +627,19 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
               easing: 'cubic-bezier(0.18, 0.67, 0.6, 1.22)',
             }}>
               {activeLead ? (
-                <div style={{ width: `${Math.min(320, columnWidth)}px` }} className="rotate-3 scale-105 transition-transform">
+                <div style={{ width: activeWidth ? `${activeWidth}px` : `${Math.min(320, columnWidth)}px` }}>
                   <KanbanCard 
                     lead={activeLead} 
                     onOpenDetail={() => {}} 
                     onStatusChange={() => {}}
                     isCompact={isCompact || columnWidth < 250}
+                    isOverlay
                   />
                 </div>
               ) : activeStage ? (
                 <div 
-                  style={{ width: `${columnWidth}px` }} 
-                  className="bg-[var(--color-surface-elevated)] border-2 border-[var(--color-primary-blue)] p-3 rounded-[var(--radius-panel)] shadow-[var(--shadow-panel)] flex items-center gap-2 text-xs font-bold text-[var(--color-text-primary)] rotate-2 scale-105"
+                  style={{ width: `${activeWidth ?? columnWidth}px` }} 
+                  className="bg-[var(--color-surface-elevated)] border-2 border-[var(--color-primary-blue)] p-3 rounded-[var(--radius-panel)] shadow-[var(--shadow-panel)] flex items-center gap-2 text-xs font-bold text-[var(--color-text-primary)]"
                 >
                   <GripVertical size={16} className="text-[var(--color-primary-blue)]" />
                   <div className={`w-3 h-3 rounded-full ${activeStage.color}`} />

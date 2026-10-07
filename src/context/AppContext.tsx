@@ -28,7 +28,7 @@ interface AppContextType {
   // Leads State for global access
   leads: Lead[];
   refreshLeads: () => void;
-  addLead: (lead: Lead) => Promise<void>;
+  addLead: (lead: Lead) => Promise<boolean>;
 
   // New Clinic & User State
   user: User | null;
@@ -120,14 +120,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('storage', handleStorage);
   }, [refreshLeads]);
 
-  const addLead = useCallback(async (incoming: Lead) => {
-    // Com Supabase o id precisa ser UUID
-    const newLead = isSupabaseConfigured() && !isUuid(incoming.id) ? { ...incoming, id: newUuid() } : incoming;
-    setLeads(prev => [newLead, ...prev.filter(l => l.id !== newLead.id)]);
-    const ok = await saveLeadToDb(newLead);
-    if (!ok) addToast('Não foi possível salvar o lead no banco de dados. Verifique a conexão e tente novamente.', 'error');
-    refreshLeads();
-  }, [refreshLeads, addToast]);
+
 
   const [clinics, setClinics] = useState<Clinic[]>(() => {
     if (typeof window !== 'undefined') {
@@ -252,6 +245,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const saved = localStorage.getItem('currentClinicId') || 'all';
     return saved;
   });
+
+  const addLead = useCallback(async (incoming: Lead): Promise<boolean> => {
+    let newLead = incoming;
+    if (isSupabaseConfigured()) {
+      // Com Supabase o id do lead e o da clínica precisam ser UUIDs de verdade
+      if (!isUuid(newLead.id)) newLead = { ...newLead, id: newUuid() };
+      if (!isUuid(newLead.clinicId)) {
+        const fallback = clinics.find(c => c.id === currentClinicId) || clinics.find(c => isUuid(c.id));
+        if (!fallback) {
+          addToast('Não foi possível identificar a clínica deste lead. Escolha uma clínica e tente de novo.', 'error');
+          return false;
+        }
+        newLead = { ...newLead, clinicId: fallback.id };
+      }
+    }
+    setLeads(prev => [newLead, ...prev.filter(l => l.id !== newLead.id)]);
+    const ok = await saveLeadToDb(newLead);
+    if (!ok) addToast('Não foi possível salvar o lead no banco de dados. Verifique a conexão e tente novamente.', 'error');
+    refreshLeads();
+    return ok;
+  }, [refreshLeads, addToast, clinics, currentClinicId]);
 
   // Keep clinic selection synchronized with user restrictions
   const setCurrentClinicId = useCallback((id: string) => {

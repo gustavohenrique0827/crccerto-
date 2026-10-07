@@ -83,12 +83,20 @@ export default function NewLeadModal({ isOpen, onClose, onAddLead }: NewLeadModa
     tags: [] as string[]
   });
 
-  // Sync clinic ID if modal opens or changes
+  // Sync clinic ID if modal opens or changes. Na visão "Rede consolidada", ou se as clínicas
+  // ainda estavam carregando na primeira renderização, escolhe uma clínica que realmente existe
+  // (um id inventado como "1" é recusado pelo banco e o lead se perde).
   useEffect(() => {
-    if (currentClinicId && currentClinicId !== 'all') {
-      setFormData(prev => ({ ...prev, clinicId: currentClinicId }));
-    }
-  }, [currentClinicId, isOpen]);
+    setFormData(prev => {
+      if (currentClinicId && currentClinicId !== 'all' && clinics.some(c => c.id === currentClinicId)) {
+        return prev.clinicId === currentClinicId ? prev : { ...prev, clinicId: currentClinicId };
+      }
+      if (clinics.length > 0 && !clinics.some(c => c.id === prev.clinicId)) {
+        return { ...prev, clinicId: clinics[0].id };
+      }
+      return prev;
+    });
+  }, [currentClinicId, isOpen, clinics]);
 
   // Live duplicate checking helper on blur or change
   const verifyDuplicate = useCallback(async (emailVal: string, phoneVal: string, clinicVal: string) => {

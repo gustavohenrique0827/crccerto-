@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '@/src/context/AppContext';
 import { cn } from '@/src/lib/utils';
+import { useAssignableMembers, CrmTask } from '@/src/lib/tasksStore';
 
 interface TaskModalProps {
   isOpen: boolean;
@@ -25,6 +26,9 @@ interface TaskModalProps {
   leadId?: string;
   leadName?: string;
   onAddTask?: (task: any) => void;
+  /** Quando informado, o modal abre em modo de edição desta tarefa. */
+  editingTask?: CrmTask | null;
+  onUpdateTask?: (task: CrmTask) => void;
 }
 
 const QUICK_CATEGORIES = [
@@ -34,8 +38,10 @@ const QUICK_CATEGORIES = [
   { label: 'Confirmar Presença', icon: Calendar, prompt: 'Confirmar agendamento de consulta de avaliação' },
 ];
 
-export default function TaskModal({ isOpen, onClose, leadId, leadName, onAddTask }: TaskModalProps) {
-  const { addToast } = useApp();
+export default function TaskModal({ isOpen, onClose, leadId, leadName, onAddTask, editingTask, onUpdateTask }: TaskModalProps) {
+  const { addToast, user } = useApp();
+  const members = useAssignableMembers(user ? { id: user.id, name: user.name } : null);
+  const isEditing = Boolean(editingTask);
   const [loading, setLoading] = useState(false);
   const [isSuggesting, setIsSuggesting] = useState(false);
   
@@ -44,8 +50,36 @@ export default function TaskModal({ isOpen, onClose, leadId, leadName, onAddTask
     description: '',
     dueDate: new Date().toISOString().split('T')[0],
     priority: 'medium' as 'low' | 'medium' | 'high' | 'urgent',
-    category: 'WhatsApp Follow-up'
+    category: 'WhatsApp Follow-up',
+    responsible: '',
+    responsibleId: ''
   });
+
+  // Abre preenchido ao editar; ao criar, o responsável padrão é quem está logado
+  useEffect(() => {
+    if (!isOpen) return;
+    if (editingTask) {
+      setFormData(prev => ({
+        ...prev,
+        title: editingTask.title,
+        description: editingTask.description || '',
+        dueDate: (editingTask.dueDate || '').slice(0, 10) || prev.dueDate,
+        priority: editingTask.priority,
+        responsible: editingTask.responsible || '',
+        responsibleId: editingTask.responsibleId || ''
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        title: '',
+        description: '',
+        dueDate: new Date().toISOString().split('T')[0],
+        priority: 'medium',
+        responsible: user?.name || '',
+        responsibleId: user?.id || ''
+      }));
+    }
+  }, [isOpen, editingTask?.id]);
 
   // Keyboard shortcut: ESC to close
   useEffect(() => {
@@ -105,6 +139,22 @@ export default function TaskModal({ isOpen, onClose, leadId, leadName, onAddTask
       return;
     }
 
+    if (editingTask && onUpdateTask) {
+      setLoading(true);
+      onUpdateTask({
+        ...editingTask,
+        title: formData.title.trim(),
+        description: formData.description,
+        dueDate: formData.dueDate,
+        priority: formData.priority,
+        responsible: formData.responsible,
+        responsibleId: formData.responsibleId || undefined
+      });
+      setLoading(false);
+      onClose();
+      return;
+    }
+
     setLoading(true);
     const newTask = {
       id: 'task_' + Date.now().toString(36),
@@ -137,7 +187,9 @@ export default function TaskModal({ isOpen, onClose, leadId, leadName, onAddTask
         description: '', 
         dueDate: new Date().toISOString().split('T')[0], 
         priority: 'medium', 
-        category: 'WhatsApp Follow-up' 
+        category: 'WhatsApp Follow-up',
+        responsible: user?.name || '',
+        responsibleId: user?.id || ''
       });
     }, 400);
   };
@@ -171,7 +223,7 @@ export default function TaskModal({ isOpen, onClose, leadId, leadName, onAddTask
                 <CheckSquare size={20} />
               </div>
               <div>
-                <h2 className="text-lg font-black text-slate-900 dark:text-white tracking-tight">Criar Tarefa Comercial</h2>
+                <h2 className="text-lg font-black text-slate-900 dark:text-white tracking-tight">{isEditing ? 'Editar Tarefa' : 'Criar Tarefa Comercial'}</h2>
                 {leadName ? (
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                     Vinculada ao lead: <strong className="text-blue-600 dark:text-blue-400">{leadName}</strong>
@@ -332,6 +384,32 @@ export default function TaskModal({ isOpen, onClose, leadId, leadName, onAddTask
               </div>
             </div>
 
+            {/* Responsible */}
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest ml-1">
+                Responsável pela tarefa
+              </label>
+              <div className="relative">
+                <User size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <select
+                  value={formData.responsibleId || formData.responsible}
+                  onChange={e => {
+                    const m = members.find(x => (x.id || x.name) === e.target.value);
+                    setFormData({ ...formData, responsible: m?.name || e.target.value, responsibleId: m?.id || '' });
+                  }}
+                  className="w-full pl-10 pr-3 py-2.5 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none dark:text-white"
+                >
+                  {formData.responsible && !members.some(m => (m.id || m.name) === (formData.responsibleId || formData.responsible)) && (
+                    <option value={formData.responsibleId || formData.responsible}>{formData.responsible}</option>
+                  )}
+                  {members.map(m => (
+                    <option key={m.id || m.name} value={m.id || m.name}>{m.name}</option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-[10px] text-slate-400 ml-1">A tarefa aparece no painel de quem for escolhido, com lembrete perto do vencimento.</p>
+            </div>
+
             {/* Actions */}
             <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2.5">
               <button
@@ -347,7 +425,7 @@ export default function TaskModal({ isOpen, onClose, leadId, leadName, onAddTask
                 className="px-6 py-2.5 text-xs font-bold bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white rounded-xl shadow-md shadow-orange-500/20 transition-all disabled:opacity-50 flex items-center gap-2 cursor-pointer"
               >
                 {loading ? <Loader2 size={16} className="animate-spin" /> : <CheckSquare size={16} />}
-                <span>Salvar Tarefa</span>
+                <span>{isEditing ? 'Salvar alterações' : 'Salvar Tarefa'}</span>
               </button>
             </div>
           </form>

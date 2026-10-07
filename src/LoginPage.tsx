@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Target, Mail, Lock, Eye, EyeOff, LogIn, Loader2, ShieldCheck, ChevronRight } from 'lucide-react';
+import { Target, Mail, Lock, Eye, EyeOff, LogIn, Loader2, ShieldCheck } from 'lucide-react';
 import { useApp } from './context/AppContext';
 import { cn } from './lib/utils';
 import { isSupabaseConfigured } from './lib/supabase';
@@ -29,141 +29,133 @@ export default function LoginPage() {
     }
   };
 
-  return (
-    <div className="min-h-screen bg-[var(--color-surface)] flex flex-col items-center justify-center p-4 selection:bg-[var(--color-primary-blue)]/20 transition-colors duration-500">
-      {/* Background Orbs */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[var(--color-primary-blue)]/5 rounded-full blur-[120px] animate-pulse" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-[var(--color-tech-cyan)]/5 rounded-full blur-[120px] animate-pulse [animation-delay:2s]" />
-      </div>
+  const RAMP = ['--stage-0', '--stage-1', '--stage-2', '--stage-3', '--stage-4', '--stage-5', '--stage-6', '--stage-7'];
 
-      <motion.div 
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-md z-10"
-      >
-        {/* Slot Identity Section */}
-        <div className="text-center mb-8">
-          <motion.div 
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ delay: 0.2 }}
-            className="inline-flex p-4 bg-[var(--color-surface-elevated)] rounded-[var(--radius-panel-lg)] shadow-[var(--shadow-panel)] mb-4 border border-[var(--color-border-default)]"
-          >
-            <div className="w-14 h-14 bg-[var(--color-primary-blue)] rounded-[var(--radius-panel)] flex items-center justify-center shadow-lg shadow-[var(--color-primary-blue)]/30">
-              <Target className="w-8 h-8 text-white" />
-            </div>
-          </motion.div>
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.3 }}
-          >
-            <p className="text-xs font-black text-[var(--color-text-faint)] uppercase tracking-widest">Painel do Gestor</p>
-          </motion.div>
+  return (
+    <div className="min-h-screen grid lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] bg-[var(--color-surface)]">
+      {/* Painel de marca: o funil de leads, do primeiro contato à venda */}
+      <aside className="hidden lg:flex flex-col justify-between bg-[var(--color-rail)] text-white p-12 xl:p-16 relative overflow-hidden">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-[var(--radius-control)] bg-[var(--color-tech-cyan)] text-[#04222A] flex items-center justify-center">
+            <Target size={22} />
+          </div>
+          <span className="font-display text-lg font-semibold tracking-tight">LeadGen CRM</span>
         </div>
 
-        {/* Auth Card */}
-        <div className="bg-[var(--color-surface-elevated)] p-8 rounded-[var(--radius-panel-lg)] shadow-[var(--shadow-panel)] border border-[var(--color-border-default)]">
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Test Credentials Helper (só no modo demonstração, sem Supabase) */}
-            {!isSupabaseConfigured() && <div className="bg-[var(--color-primary-blue)]/10 border border-[var(--color-primary-blue)]/25 p-4 rounded-[var(--radius-panel)] mb-2">
-              <div className="flex items-center gap-2 mb-1">
-                <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-primary-blue)]" />
-                <span className="text-[10px] font-bold text-[var(--color-primary-blue)] uppercase tracking-widest">Acesso de Teste</span>
-              </div>
-              <div className="flex justify-between text-[11px]">
-                <span className="text-[var(--color-text-muted)] font-medium">Email: <span className="text-[var(--color-text-primary)] font-bold select-all">admin@crm.com</span></span>
-                <span className="text-[var(--color-text-muted)] font-medium">Senha: <span className="text-[var(--color-text-primary)] font-bold select-all">admin123</span></span>
-              </div>
-            </div>}
+        <div className="max-w-xl">
+          <h1 className="font-display text-5xl xl:text-6xl font-semibold leading-[1.02] tracking-tight">
+            Do primeiro contato<br />à cadeira do dentista.
+          </h1>
+          <p className="mt-5 text-base text-white/70 max-w-md leading-relaxed">
+            Pipeline de leads, agenda das clínicas e follow-up da equipe, na mesma tela.
+          </p>
 
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-[var(--color-text-muted)] block ml-0.5">Email de Acesso</label>
-              <div className="relative group">
-                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)] group-focus-within:text-[var(--color-text-primary)] transition-colors" />
-                <input 
-                  type="email" 
+          <div className="mt-12" aria-hidden="true">
+            <div className="flex gap-1.5">
+              {RAMP.map((v, i) => (
+                <div key={v} className="h-2.5 flex-1 rounded-full" style={{ background: `var(${v})`, opacity: 0.55 + i * 0.065 }} />
+              ))}
+            </div>
+            <div className="mt-2.5 flex justify-between text-[11px] font-medium uppercase tracking-widest text-white/50">
+              <span>Novo lead</span>
+              <span>Agendado</span>
+              <span>Venda</span>
+            </div>
+          </div>
+        </div>
+
+        <p className="text-xs text-white/40">Gestão de leads e agenda para redes de clínicas</p>
+      </aside>
+
+      {/* Formulário */}
+      <main className="flex items-center justify-center p-6 sm:p-10">
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25 }}
+          className="w-full max-w-sm"
+        >
+          <div className="lg:hidden flex items-center gap-2.5 mb-8">
+            <div className="w-9 h-9 rounded-[var(--radius-control)] bg-[var(--color-primary-blue)] text-white flex items-center justify-center">
+              <Target size={20} />
+            </div>
+            <span className="font-display text-lg font-semibold tracking-tight text-[var(--color-text-primary)]">LeadGen CRM</span>
+          </div>
+
+          <h2 className="font-display text-3xl font-semibold tracking-tight text-[var(--color-text-primary)]">Entrar</h2>
+          <p className="mt-1.5 text-sm text-[var(--color-text-muted)]">Use o e-mail e a senha cadastrados para você.</p>
+
+          <form onSubmit={handleSubmit} className="mt-8 space-y-5">
+            {!isSupabaseConfigured() && (
+              <div className="rounded-[var(--radius-control)] border border-[var(--color-primary-blue)]/25 bg-[var(--color-primary-blue)]/8 p-3.5">
+                <div className="flex items-center gap-2 mb-1">
+                  <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-primary-blue)]" />
+                  <span className="text-[11px] font-bold text-[var(--color-primary-blue)] uppercase tracking-widest">Modo demonstração</span>
+                </div>
+                <div className="flex justify-between text-xs text-[var(--color-text-muted)]">
+                  <span>E-mail: <span className="font-mono font-medium text-[var(--color-text-primary)] select-all">admin@crm.com</span></span>
+                  <span>Senha: <span className="font-mono font-medium text-[var(--color-text-primary)] select-all">admin123</span></span>
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <label htmlFor="login-email" className="text-xs font-semibold text-[var(--color-text-muted)] block">E-mail</label>
+              <div className="relative">
+                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
+                <input
+                  id="login-email"
+                  type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] hover:border-[var(--color-primary-blue)]/50 focus:border-[var(--color-primary-blue)] rounded-[var(--radius-control)] outline-none transition-all text-[var(--color-text-primary)] placeholder:text-[var(--color-text-faint)] text-xs font-medium"
-                  placeholder="admin@exemplo.com"
+                  className="w-full pl-10 pr-4 py-3 bg-[var(--color-surface-elevated)] border border-[var(--color-border-default)] hover:border-[var(--color-primary-blue)]/50 focus:border-[var(--color-primary-blue)] rounded-[var(--radius-control)] outline-none transition-colors text-[var(--color-text-primary)] placeholder:text-[var(--color-text-faint)] text-sm"
+                  placeholder="voce@clinica.com"
                   autoComplete="email"
                 />
               </div>
             </div>
 
-            <div className="space-y-2">
-              <div className="flex justify-between items-center px-0.5">
-                <label className="text-xs font-semibold text-[var(--color-text-muted)]">Senha de Segurança</label>
-                <button type="button" className="text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors">Esqueceu?</button>
-              </div>
-              <div className="relative group">
-                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)] group-focus-within:text-[var(--color-text-primary)] transition-colors" />
-                <input 
-                  type={showPassword ? "text" : "password"} 
+            <div className="space-y-1.5">
+              <label htmlFor="login-password" className="text-xs font-semibold text-[var(--color-text-muted)] block">Senha</label>
+              <div className="relative">
+                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
+                <input
+                  id="login-password"
+                  type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-10 pr-10 py-3 bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] hover:border-[var(--color-primary-blue)]/50 focus:border-[var(--color-primary-blue)] rounded-[var(--radius-control)] outline-none transition-all text-[var(--color-text-primary)] placeholder:text-[var(--color-text-faint)] text-xs font-medium"
-                  placeholder="••••••••"
+                  className="w-full pl-10 pr-10 py-3 bg-[var(--color-surface-elevated)] border border-[var(--color-border-default)] hover:border-[var(--color-primary-blue)]/50 focus:border-[var(--color-primary-blue)] rounded-[var(--radius-control)] outline-none transition-colors text-[var(--color-text-primary)] placeholder:text-[var(--color-text-faint)] text-sm"
+                  placeholder="Sua senha"
                   autoComplete="current-password"
                 />
-                <button 
+                <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text-primary)] transition-colors"
+                  aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text-primary)] transition-colors cursor-pointer"
                 >
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 px-1">
-              <label className="flex items-center gap-3 cursor-pointer group">
-                <div className="relative">
-                  <input type="checkbox" className="sr-only peer" />
-                  <div className="w-5 h-5 bg-[var(--color-surface-sunken)] rounded border border-[var(--color-border-default)] peer-checked:bg-[var(--color-primary-blue)] peer-checked:border-[var(--color-primary-blue)] transition-all" />
-                  <ShieldCheck className="absolute inset-0 w-3 h-3 text-white m-auto opacity-0 peer-checked:opacity-100 transition-opacity" />
-                </div>
-                <span className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider group-hover:text-[var(--color-text-primary)] transition-colors">Manter conectado</span>
-              </label>
-            </div>
-
-            <button 
+            <button
               type="submit"
               disabled={isLoading}
-              className="w-full bg-[var(--color-primary-blue)] hover:brightness-110 !text-white py-3.5 rounded-[var(--radius-control)] font-bold text-sm shadow-[var(--shadow-control)] transition-all flex items-center justify-center gap-3 active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed group overflow-hidden relative cursor-pointer"
+              className="w-full bg-[var(--color-primary-blue)] hover:brightness-110 !text-white py-3 rounded-[var(--radius-control)] font-semibold text-sm transition-all flex items-center justify-center gap-2.5 active:scale-[0.99] disabled:opacity-70 disabled:cursor-not-allowed cursor-pointer"
             >
               {isLoading ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
               ) : (
                 <>
-                  <span>Entrar no Sistema</span>
-                  <div className="bg-white/20 p-1.5 rounded-md group-hover:translate-x-1 transition-transform">
-                    <LogIn size={16} />
-                  </div>
+                  <span>Entrar</span>
+                  <LogIn size={16} />
                 </>
               )}
             </button>
           </form>
-        </div>
-
-        {/* Footer */}
-        <motion.div 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.5 }}
-          className="mt-8 text-center space-y-4"
-        >
-          <div className="flex items-center justify-center gap-6">
-            <a href="#" className="text-xs font-bold text-[var(--color-text-faint)] hover:text-[var(--color-text-primary)] uppercase tracking-widest transition-colors">Suporte</a>
-            <div className="w-1 h-1 rounded-full bg-[var(--color-border-default)]" />
-            <a href="#" className="text-xs font-bold text-[var(--color-text-faint)] hover:text-[var(--color-text-primary)] uppercase tracking-widest transition-colors">Privacidade</a>
-            <div className="w-1 h-1 rounded-full bg-[var(--color-border-default)]" />
-            <a href="#" className="text-xs font-bold text-[var(--color-text-faint)] hover:text-[var(--color-text-primary)] uppercase tracking-widest transition-colors">Status</a>
-          </div>
         </motion.div>
-      </motion.div>
+      </main>
     </div>
   );
 }

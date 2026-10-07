@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { createPortal } from 'react-dom';
 import { 
   X, 
   User, 
@@ -42,6 +43,7 @@ import {
 import { Lead } from '@/src/types';
 import { cn } from '@/src/lib/utils';
 import { useApp } from '@/src/context/AppContext';
+import { fetchLeadTimelineFromDb, LeadTimelineItem, updateLeadEverywhere, addLeadNote, deleteLeadNote, isSupabaseConfigured, isUuid } from '@/src/lib/supabase';
 
 interface LeadDetailProps {
   isOpen: boolean;
@@ -49,9 +51,101 @@ interface LeadDetailProps {
   lead: Lead | null;
 }
 
-export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
-  const { addToast, currentClinic } = useApp();
+const SOURCE_OPTIONS = ['Meta Ads', 'Google Ads', 'Instagram', 'Facebook', 'WhatsApp', 'Site', 'Indicação', 'Manual / CRM'];
+
+const EDITABLE_FIELDS = ['name', 'whatsapp', 'phone', 'email', 'birthDate', 'cpf', 'cep', 'address', 'procedureType', 'sourceId', 'estimatedValue'] as const;
+
+export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDetailProps) {
+  const { addToast, currentClinic, clinics, setActiveTab: navigateTo, user } = useApp();
+
+  // Alterações salvas na ficha valem imediatamente, mesmo antes de o pai recarregar o lead
+  const [overrides, setOverrides] = useState<Partial<Lead>>({});
+  const lead = useMemo(() => (leadProp ? ({ ...leadProp, ...overrides } as Lead) : null), [leadProp, overrides]);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+
+  useEffect(() => {
+    setOverrides({});
+    setIsEditing(false);
+  }, [leadProp?.id]);
+
+  useEffect(() => {
+    if (!lead) return;
+    setDraft({
+      name: lead.name || '',
+      whatsapp: lead.whatsapp || '',
+      phone: lead.phone || '',
+      email: lead.email || '',
+      birthDate: lead.birthDate ? String(lead.birthDate).slice(0, 10) : '',
+      cpf: lead.cpf || '',
+      cep: lead.cep || '',
+      address: lead.address || '',
+      procedureType: lead.procedureType || '',
+      sourceId: lead.sourceId || '',
+      estimatedValue: lead.estimatedValue ? String(lead.estimatedValue) : ''
+    });
+  }, [lead?.id, leadProp, overrides]);
+
+  const isDirty = !!lead && EDITABLE_FIELDS.some(f => (draft[f] ?? '') !== String(f === 'birthDate' ? (lead.birthDate || '').slice(0, 10) : (lead as any)[f] ?? (f === 'estimatedValue' ? '' : '')) && !(f === 'estimatedValue' && !lead.estimatedValue && !draft[f]));
+
+  const handleSaveProfile = async () => {
+    if (!lead) return;
+    if (!draft.name?.trim()) {
+      addToast('O nome do lead não pode ficar vazio.', 'error');
+      return;
+    }
+    const updates: Record<string, any> = {};
+    EDITABLE_FIELDS.forEach(f => {
+      const before = f === 'birthDate' ? (lead.birthDate || '').slice(0, 10) : String((lead as any)[f] ?? (f === 'estimatedValue' ? '' : ''));
+      if ((draft[f] ?? '') !== before) {
+        updates[f] = f === 'estimatedValue' ? Number(String(draft[f]).replace(',', '.')) || 0 : draft[f].trim();
+      }
+    });
+    if (Object.keys(updates).length === 0) return;
+    setSaving(true);
+    const ok = await updateLeadEverywhere(lead.id, updates);
+    setSaving(false);
+    if (ok) {
+      setOverrides(prev => ({ ...prev, ...updates }));
+      setIsEditing(false);
+      addToast('Dados do lead atualizados.', 'success');
+    } else {
+      addToast('Não foi possível salvar as alterações no banco de dados.', 'error');
+    }
+  };
+
+  const handleCancelEdit = () => {
+    if (!lead) return;
+    setDraft({
+      name: lead.name || '',
+      whatsapp: lead.whatsapp || '',
+      phone: lead.phone || '',
+      email: lead.email || '',
+      birthDate: lead.birthDate ? String(lead.birthDate).slice(0, 10) : '',
+      cpf: lead.cpf || '',
+      cep: lead.cep || '',
+      address: lead.address || '',
+      procedureType: lead.procedureType || '',
+      sourceId: lead.sourceId || '',
+      estimatedValue: lead.estimatedValue ? String(lead.estimatedValue) : ''
+    });
+    setIsEditing(false);
+  };
+
+  const clinicName = lead ? (clinics.find(c => c.id === lead.clinicId)?.name || 'Clínica não identificada') : '';
+
+  const handleSchedule = () => {
+    if (!lead) return;
+    try {
+      localStorage.setItem('crm_schedule_prefill', JSON.stringify({ leadId: lead.id, name: lead.name, phone: lead.whatsapp || lead.phone, clinicId: lead.clinicId, procedure: lead.procedureType || '' }));
+    } catch {}
+    onClose();
+    navigateTo('agenda');
+  };
   const [activeTab, setActiveTab] = useState<'info' | 'history' | 'procedures' | 'docs' | 'tasks' | 'plan' | 'ai'>('info');
+  const [timeline, setTimeline] = useState<LeadTimelineItem[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [aiSummary, setAiSummary] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -100,6 +194,8 @@ export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
 
   // Quick Notes State
   const [noteContent, setNoteContent] = useState('');
+  const [noteDate, setNoteDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [savingNote, setSavingNote] = useState(false);
   const [notes, setNotes] = useState<{id: string, text: string, date: string}[]>(() => {
     const saved = localStorage.getItem(`lead_notes_${lead?.id}`);
     return saved ? JSON.parse(saved) : [];
@@ -111,6 +207,51 @@ export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
     const saved = localStorage.getItem(`lead_tasks_${lead?.id}`);
     return saved ? JSON.parse(saved) : [];
   });
+
+  const reloadTimeline = React.useCallback(async () => {
+    if (!lead) return;
+    setTimelineLoading(true);
+    try {
+      setTimeline(await fetchLeadTimelineFromDb(lead));
+    } finally {
+      setTimelineLoading(false);
+    }
+  }, [lead?.id, lead?.phone, lead?.whatsapp]);
+
+  // Carrega ao abrir a ficha (o contador "Notas" do topo precisa do número certo) e ao entrar no Histórico
+  useEffect(() => {
+    if (!isOpen || !lead) return;
+    reloadTimeline();
+  }, [isOpen, lead?.id, activeTab === 'history', reloadTimeline]);
+
+  const dbNotes = timeline.filter(t => t.kind === 'note');
+  const useDbNotes = isSupabaseConfigured() && isUuid(lead?.id);
+
+  const handleAddNote = async () => {
+    if (!lead || !noteContent.trim()) return;
+    if (!useDbNotes) {
+      saveNote(); // modo demonstração: guarda só neste navegador
+      return;
+    }
+    setSavingNote(true);
+    const ok = await addLeadNote(lead.id, noteContent, noteDate, user?.id);
+    setSavingNote(false);
+    if (ok) {
+      setNoteContent('');
+      setNoteDate(new Date().toISOString().slice(0, 10));
+      addToast('Anotação adicionada ao histórico.', 'success');
+      reloadTimeline();
+    } else {
+      addToast('Não foi possível salvar a anotação no banco de dados.', 'error');
+    }
+  };
+
+  const handleDeleteNote = async (noteId?: string) => {
+    if (!noteId) return;
+    const ok = await deleteLeadNote(noteId);
+    addToast(ok ? 'Anotação excluída.' : 'Não foi possível excluir a anotação.', ok ? 'info' : 'error');
+    if (ok) reloadTimeline();
+  };
 
   useEffect(() => {
     if (lead) {
@@ -307,12 +448,12 @@ export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
     { id: 'history', label: 'Histórico', icon: History },
     { id: 'tasks', label: 'Tarefas', icon: CalendarCheck },
     { id: 'plan', label: 'Plano', icon: ClipboardList },
-    { id: 'procedures', label: 'Clínico', icon: Stethoscope },
+    { id: 'procedures', label: 'Origem', icon: Target },
     { id: 'docs', label: 'Docs', icon: FileText },
     { id: 'ai', label: 'IA', icon: Sparkles },
   ] as const;
 
-  return (
+  return createPortal(
     <AnimatePresence>
       {isOpen && (
         <>
@@ -321,14 +462,15 @@ export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50"
+            className="fixed inset-0 bg-slate-950/70 backdrop-blur-md z-[100]"
           />
+          <div className="fixed inset-0 z-[101] flex items-center justify-center p-3 sm:p-6 pointer-events-none">
           <motion.div
-            initial={{ x: '100%' }}
-            animate={{ x: 0 }}
-            exit={{ x: '100%' }}
-            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed right-0 top-0 bottom-0 w-full max-w-xl bg-white dark:bg-slate-950 shadow-2xl z-50 overflow-hidden flex flex-col"
+            initial={{ opacity: 0, scale: 0.96, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 16 }}
+            transition={{ type: 'spring', damping: 26, stiffness: 260 }}
+            className="pointer-events-auto w-full max-w-2xl max-h-[88vh] bg-white dark:bg-slate-950 shadow-2xl rounded-3xl border border-slate-200/80 dark:border-slate-800 overflow-hidden flex flex-col"
           >
             {/* Header */}
             <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50 relative overflow-hidden">
@@ -394,18 +536,14 @@ export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
             )}
 
             {/* Quick Info Bar */}
-            <div className="grid grid-cols-4 border-b border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-950 text-center">
+            <div className="grid grid-cols-3 border-b border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-950 text-center">
               <div className="p-3 border-r border-slate-100 dark:border-slate-800">
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-0.5">WhatsApp</span>
                 <span className="text-[10px] font-bold text-slate-800 dark:text-slate-200 truncate block">{lead.whatsapp || lead.phone || '-'}</span>
               </div>
               <div className="p-3 border-r border-slate-100 dark:border-slate-800">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-0.5">E-mail</span>
-                <span className="text-[10px] font-bold text-slate-800 dark:text-slate-200 truncate block">{lead.email || '-'}</span>
-              </div>
-              <div className="p-3 border-r border-slate-100 dark:border-slate-800">
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-0.5">Notas</span>
-                <span className="text-[10px] font-bold text-slate-800 dark:text-slate-200 block">{notes.length}</span>
+                <span className="text-[10px] font-bold text-slate-800 dark:text-slate-200 block">{useDbNotes ? dbNotes.length : notes.length}</span>
               </div>
               <div className="p-3">
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-0.5">Tarefas</span>
@@ -444,53 +582,94 @@ export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
                     className="space-y-4"
                   >
                     <div className="bg-slate-50 dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-4">
-                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                        <User size={14} className="text-blue-500" />
-                        Informações Cadastrais do Cliente
-                      </h3>
-                      
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                          <User size={14} className="text-blue-500" />
+                          Informações cadastrais
+                        </h3>
+                        {isEditing ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={handleCancelEdit}
+                              disabled={saving}
+                              className="px-3 py-1.5 rounded-lg text-[11px] font-bold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              onClick={handleSaveProfile}
+                              disabled={saving || !isDirty}
+                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
+                            >
+                              {saving ? 'Salvando...' : 'Salvar'}
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setIsEditing(true)}
+                            className="px-3 py-1.5 rounded-lg text-[11px] font-bold border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors cursor-pointer"
+                          >
+                            Editar
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Nome Completo</span>
-                          <span className="text-xs font-bold text-slate-800 dark:text-white">{lead.name}</span>
-                        </div>
-                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Telefone / WhatsApp</span>
-                          <span className="text-xs font-bold text-slate-800 dark:text-white">{lead.whatsapp || lead.phone || 'Não informado'}</span>
-                        </div>
-                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Data de Nascimento</span>
-                          <span className="text-xs font-bold text-slate-800 dark:text-white">{lead.birthDate ? new Date(lead.birthDate).toLocaleDateString('pt-BR') : 'Não informada'}</span>
-                        </div>
-                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <input type="text" value={draft.name ?? ''} onChange={e => setDraft(d => ({ ...d, name: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
+                        </label>
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">WhatsApp</span>
+                          <input type="tel" value={draft.whatsapp ?? ''} onChange={e => setDraft(d => ({ ...d, whatsapp: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
+                        </label>
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Telefone</span>
+                          <input type="tel" value={draft.phone ?? ''} onChange={e => setDraft(d => ({ ...d, phone: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
+                        </label>
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">E-mail</span>
-                          <span className="text-xs font-bold text-slate-800 dark:text-white truncate block">{lead.email || 'Não informado'}</span>
-                        </div>
-                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <input type="email" value={draft.email ?? ''} onChange={e => setDraft(d => ({ ...d, email: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
+                        </label>
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Data de Nascimento</span>
+                          <input type="date" value={draft.birthDate ?? ''} onChange={e => setDraft(d => ({ ...d, birthDate: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
+                        </label>
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">CPF</span>
-                          <span className="text-xs font-bold text-slate-800 dark:text-white">{lead.cpf || 'Não informado'}</span>
-                        </div>
-                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <input type="text" value={draft.cpf ?? ''} onChange={e => setDraft(d => ({ ...d, cpf: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
+                        </label>
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">CEP</span>
-                          <span className="text-xs font-bold text-slate-800 dark:text-white">{lead.cep || 'Não informado'}</span>
-                        </div>
+                          <input type="text" value={draft.cep ?? ''} onChange={e => setDraft(d => ({ ...d, cep: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
+                        </label>
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Procedimento de interesse</span>
+                          <input type="text" value={draft.procedureType ?? ''} onChange={e => setDraft(d => ({ ...d, procedureType: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
+                        </label>
                       </div>
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Endereço Completo</span>
+                          <input type="text" value={draft.address ?? ''} onChange={e => setDraft(d => ({ ...d, address: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
+                        </label>
 
-                      <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
-                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Endereço Completo</span>
-                        <span className="text-xs font-bold text-slate-800 dark:text-white">{lead.address || 'Não informado'}</span>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Clínica / Unidade</span>
-                          <span className="text-xs font-bold text-slate-800 dark:text-white">{lead.clinicId === '1' ? 'Odonto Premium' : 'Estética Viver'}</span>
+                          <span className="text-xs font-bold text-slate-800 dark:text-white">{clinicName}</span>
                         </div>
-                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Origem / Canal</span>
-                          <span className="text-xs font-bold text-slate-800 dark:text-white uppercase">{lead.sourceId || 'Tráfego'}</span>
-                        </div>
+                          <select value={draft.sourceId ?? ''} disabled={!isEditing} onChange={e => setDraft(d => ({ ...d, sourceId: e.target.value }))} className="w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none disabled:appearance-none disabled:cursor-default">
+                            {draft.sourceId && !SOURCE_OPTIONS.includes(draft.sourceId) && <option value={draft.sourceId}>{draft.sourceId}</option>}
+                            {SOURCE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                          </select>
+                        </label>
                       </div>
+                        <label className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800 block ">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Valor estimado (R$)</span>
+                          <input type="number" value={draft.estimatedValue ?? ''} onChange={e => setDraft(d => ({ ...d, estimatedValue: e.target.value }))} readOnly={!isEditing} className={cn("w-full bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none", isEditing ? "focus:text-blue-600" : "cursor-default")} />
+                        </label>
 
                       {lead?.tags && lead.tags.length > 0 && (
                         <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
@@ -516,6 +695,40 @@ export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
                     exit={{ opacity: 0, x: -10 }}
                     className="space-y-8"
                   >
+                    {/* O que foi conversado com o lead: anotação com data, salva no banco */}
+                    <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-3">
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                        <StickyNote size={14} className="text-blue-500" />
+                        Registrar conversa
+                      </h3>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="date"
+                          value={noteDate}
+                          max={new Date().toISOString().slice(0, 10)}
+                          onChange={e => setNoteDate(e.target.value)}
+                          aria-label="Data da conversa"
+                          className="sm:w-40 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                        />
+                        <textarea
+                          value={noteContent}
+                          onChange={e => setNoteContent(e.target.value)}
+                          rows={2}
+                          placeholder="O que foi conversado ou combinado? Ex.: pediu orçamento; combinado retomar contato sexta."
+                          className="flex-1 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500 dark:text-white resize-none"
+                        />
+                      </div>
+                      <div className="flex justify-end">
+                        <button
+                          onClick={handleAddNote}
+                          disabled={savingNote || !noteContent.trim()}
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                        >
+                          {savingNote ? 'Salvando...' : 'Adicionar ao histórico'}
+                        </button>
+                      </div>
+                    </div>
+
                     {/* Combined Timeline: System events + Quick Notes */}
                     <div className="space-y-6">
                       <div className="flex items-center justify-between">
@@ -524,7 +737,7 @@ export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
                       
                       <div className="relative border-l-2 border-slate-100 dark:border-slate-800 ml-3 pl-8 space-y-10 py-2">
                         {/* Quick Notes Rendering */}
-                        {(notes || []).map((note) => (
+                        {(useDbNotes ? [] : (notes || [])).map((note) => (
                           <div key={note.id} className="relative group">
                             <div className="absolute -left-[45px] top-0 w-8 h-8 rounded-xl flex items-center justify-center border-4 border-white dark:border-slate-950 shadow-sm transition-transform group-hover:scale-110 bg-blue-50 text-blue-600 dark:bg-blue-900/30">
                               <StickyNote size={14} />
@@ -539,26 +752,42 @@ export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
                           </div>
                         ))}
 
-                        {/* System History */}
-                        {[
-                          { title: 'Status Atualizado', desc: 'Alterado para Agendamento por Gustavo', date: 'Há 2 horas', icon: Clock, color: 'text-purple-600 bg-purple-50 dark:bg-purple-900/30' },
-                          { title: 'Ligação Realizada', desc: 'Paciente demonstrou interesse em implantes.', date: 'Hoje, 10:30', icon: Phone, color: 'text-blue-600 bg-blue-50 dark:bg-blue-900/30' },
-                          { title: 'Anotação Clínica', desc: 'Paciente relata dor no molar superior direito.', date: 'Ontem, 18:20', icon: Stethoscope, color: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30' },
-                          { title: 'Novo Lead Capturado', desc: 'Origem: Facebook Ads - Campanha Implante Verão', date: 'Ontem, 16:45', icon: TagIcon, color: 'text-orange-600 bg-orange-50 dark:bg-orange-900/30' },
-                        ].map((item, i) => (
-                          <div key={i} className="relative group">
+                        {/* Conversas e eventos reais (Supabase / agente n8n) */}
+                        {timelineLoading && timeline.length === 0 && (
+                          <p className="text-xs text-slate-400">Carregando histórico...</p>
+                        )}
+                        {!timelineLoading && timeline.length === 0 && (
+                          <p className="text-xs text-slate-400">Nenhuma conversa ou evento registrado para este lead ainda.</p>
+                        )}
+                        {timeline.map(item => (
+                          <div key={item.id} className="relative group">
                             <div className={cn(
                               "absolute -left-[45px] top-0 w-8 h-8 rounded-xl flex items-center justify-center border-4 border-white dark:border-slate-950 shadow-sm transition-transform group-hover:scale-110",
-                              item.color
+                              item.kind === 'client' ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30'
+                                : item.kind === 'note' ? 'text-amber-600 bg-amber-50 dark:bg-amber-900/30'
+                                : item.kind === 'team' ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/30'
+                                : 'text-purple-600 bg-purple-50 dark:bg-purple-900/30'
                             )}>
-                              <item.icon size={14} />
+                              {item.kind === 'event' ? <Clock size={14} /> : item.kind === 'note' ? <StickyNote size={14} /> : <MessageSquare size={14} />}
                             </div>
                             <div>
                               <div className="flex items-center justify-between mb-1">
-                                <h4 className="text-sm font-bold text-slate-800 dark:text-white tracking-tight">{item.title}</h4>
-                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{item.date}</span>
+                                <h4 className="text-sm font-bold text-slate-800 dark:text-white tracking-tight">
+                                  {item.title}
+                                  {item.author && <span className="ml-1.5 text-[10px] font-semibold text-slate-400 normal-case">por {item.author}</span>}
+                                </h4>
+                                <span className="flex items-center gap-2 text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                                  {item.kind === 'note'
+                                    ? new Date(item.date).toLocaleDateString('pt-BR')
+                                    : new Date(item.date).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                  {item.kind === 'note' && (
+                                    <button onClick={() => handleDeleteNote(item.noteId)} title="Excluir anotação" className="text-slate-300 hover:text-rose-500 transition-colors cursor-pointer">
+                                      <Trash2 size={12} />
+                                    </button>
+                                  )}
+                                </span>
                               </div>
-                              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">{item.desc}</p>
+                              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed whitespace-pre-wrap">{item.text || '(mensagem sem texto registrada)'}</p>
                             </div>
                           </div>
                         ))}
@@ -751,61 +980,47 @@ export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
                     initial={{ opacity: 0, x: 10 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -10 }}
-                    className="space-y-6"
+                    className="space-y-4"
                   >
-                    <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 overflow-hidden shadow-sm">
-                      <div className="p-4 bg-slate-50 dark:bg-slate-900/50 flex items-center justify-between">
-                        <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Evolução Clínica</h3>
-                        <button className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">Nova Evolução</button>
-                      </div>
-                      <div className="p-8 text-center text-slate-400">
-                        <Stethoscope size={32} className="mx-auto mb-2 opacity-30" />
-                        <p className="text-xs font-bold text-slate-600 dark:text-slate-300">Nenhuma evolução clínica registrada</p>
-                        <p className="text-[10px] text-slate-400 mt-1">Os registros odontológicos e anotações médicas aparecerão aqui.</p>
-                      </div>
-                    </div>
-
-                    <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm">
-                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                        <PieChartIcon size={14} className="text-indigo-500" />
-                        Origem de Captação
+                    <div className="bg-slate-50 dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-4">
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                        <Target size={14} className="text-blue-500" />
+                        Origem de captação
                       </h3>
-                      <div className="h-[160px] relative">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Pie
-                              data={[
-                                { name: 'Instagram', value: 70, color: '#3b82f6' },
-                                { name: 'Indicação', value: 30, color: '#10b981' },
-                              ]}
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={40}
-                              outerRadius={55}
-                              paddingAngle={5}
-                              dataKey="value"
-                            >
-                              {[
-                                { name: 'Instagram', value: 70, color: '#3b82f6' },
-                                { name: 'Indicação', value: 30, color: '#10b981' },
-                              ].map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={entry.color} />
-                              ))}
-                            </Pie>
-                            <Tooltip 
-                              contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '10px' }}
-                            />
-                          </PieChart>
-                        </ResponsiveContainer>
-                        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                          <span className="text-lg font-bold text-slate-900 dark:text-white">Ads</span>
-                          <span className="text-[8px] text-slate-400 font-bold uppercase">Source</span>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 -mt-2">De qual anúncio ou canal este contato chegou.</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Canal de captação</span>
+                          <span className="text-xs font-bold text-slate-800 dark:text-white break-words">{lead.sourceId || 'Não informado'}</span>
+                        </div>
+                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Campanha</span>
+                          <span className="text-xs font-bold text-slate-800 dark:text-white break-words">{lead.utmCampaign || lead.campaignId || 'Não informado'}</span>
+                        </div>
+                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Mídia / formato</span>
+                          <span className="text-xs font-bold text-slate-800 dark:text-white break-words">{lead.utmMedium || lead.sourceMedium || 'Não informado'}</span>
+                        </div>
+                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Anúncio / conteúdo</span>
+                          <span className="text-xs font-bold text-slate-800 dark:text-white break-words">{lead.utmContent || 'Não informado'}</span>
+                        </div>
+                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Palavra-chave</span>
+                          <span className="text-xs font-bold text-slate-800 dark:text-white break-words">{lead.utmTerm || 'Não informado'}</span>
+                        </div>
+                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Página de origem</span>
+                          <span className="text-xs font-bold text-slate-800 dark:text-white break-words">{lead.referralUrl || 'Não informado'}</span>
+                        </div>
+                        <div className="bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Entrou em</span>
+                          <span className="text-xs font-bold text-slate-800 dark:text-white">{lead.createdAt ? new Date(lead.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Não informado'}</span>
                         </div>
                       </div>
                     </div>
                   </motion.div>
                 )}
-
                 {activeTab === 'docs' && (
                   <motion.div
                     key="docs"
@@ -870,18 +1085,19 @@ export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
                 WhatsApp
               </button>
               <button 
-                onClick={() => handleQuickAction('email')}
+                onClick={handleSchedule}
                 className="py-2.5 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-blue-500 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 shadow-xs transition-all active:scale-[0.98]"
               >
-                <Mail size={14} className="text-indigo-600" />
-                E-mail
+                <CalendarCheck size={14} className="text-indigo-600" />
+                Agendar
               </button>
             </div>
           </motion.div>
+          </div>
 
           {/* Quick Action Template Modal */}
           {quickActionModal.isOpen && (
-            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+            <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
               <motion.div 
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -1100,6 +1316,7 @@ export default function LeadDetail({ isOpen, onClose, lead }: LeadDetailProps) {
           )}
         </>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 }

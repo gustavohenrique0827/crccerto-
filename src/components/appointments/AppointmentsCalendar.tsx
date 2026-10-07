@@ -49,6 +49,7 @@ import {
   SyncQueueItem 
 } from '../../lib/syncQueue';
 import { createCalendarEvent, performBidirectionalSync } from '../../lib/googleCalendar';
+import { isSupabaseConfigured, fetchAppointmentsFromDb, saveAppointmentsToDb, fetchProfessionalsFromDb } from '../../lib/supabase';
 import { buildGoogleEventFromAppointment, getCalendarFieldMapping } from '../../lib/googleCalendarMapping';
 import { getGoogleSyncSettings, recordSyncExecution } from '../../lib/googleSyncSettings';
 
@@ -74,6 +75,71 @@ export interface Appointment {
   googleSyncError?: string;
   lastSyncedAt?: string;
   source?: 'crm' | 'google_calendar';
+}
+
+const HOUR_PX = 72; // altura de 1 hora na visão semanal
+const MIN_CARD_PX = 22; // altura mínima legível de um card
+const MIN_LAYOUT_MIN = Math.ceil((MIN_CARD_PX / HOUR_PX) * 60); // minutos que um card curto ocupa de fato
+
+const timeToMinutes = (t: string) => {
+  const [h, m] = String(t || '00:00').split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+};
+const minutesToTime = (min: number) =>
+  `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+
+/** Cor estável por profissional (matiz derivado do nome): separa as agendas que correm em paralelo. */
+const profHue = (name?: string) => {
+  let h = 0;
+  for (const ch of String(name || '')) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return h;
+};
+const profColors = (name?: string) => {
+  const h = profHue(name);
+  return { border: `hsl(${h} 62% 42%)`, bg: `hsl(${h} 70% 48% / 0.16)` };
+};
+
+type DayItem = { apt: Appointment; start: number; end: number; realEnd: number; lane: number; lanes: number; span: number };
+
+/** Distribui os agendamentos de um dia em "faixas" lado a lado; cada card ocupa as faixas livres à direita. */
+function layoutDayAppointments(apts: Appointment[]): DayItem[] {
+  const items: DayItem[] = apts
+    .map((apt): DayItem => {
+      const start = timeToMinutes(apt.time);
+      const duration = Math.max(Number(apt.duration) || 30, 5);
+      // `end` é o espaço realmente ocupado na tela (inclui a altura mínima); `realEnd` é o horário de término
+      return { apt, start, end: start + Math.max(duration, MIN_LAYOUT_MIN), realEnd: start + duration, lane: 0, lanes: 1, span: 1 };
+    })
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+
+  let cluster: DayItem[] = [];
+  let clusterEnd = -1;
+  const laneEnds: number[] = [];
+  const closeCluster = () => {
+    const lanes = laneEnds.length || 1;
+    cluster.forEach(it => {
+      it.lanes = lanes;
+      let span = 1;
+      for (let l = it.lane + 1; l < lanes; l++) {
+        const blocked = cluster.some(o => o !== it && o.lane === l && o.start < it.end && it.start < o.end);
+        if (blocked) break;
+        span++;
+      }
+      it.span = span;
+    });
+    cluster = [];
+    laneEnds.length = 0;
+  };
+  items.forEach(it => {
+    if (cluster.length && it.start >= clusterEnd) closeCluster();
+    let lane = laneEnds.findIndex(end => end <= it.start);
+    if (lane === -1) { lane = laneEnds.length; laneEnds.push(it.end); } else laneEnds[lane] = it.end;
+    it.lane = lane;
+    cluster.push(it);
+    clusterEnd = Math.max(clusterEnd, it.end);
+  });
+  closeCluster();
+  return items;
 }
 
 const HOURS = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
@@ -223,6 +289,14 @@ export default function AppointmentsCalendar() {
 
   // Fetch appointments from API
   useEffect(() => {
+    if (isSupabaseConfigured()) {
+      fetchAppointmentsFromDb(effectiveClinicId).then(list => {
+        if (!list) return;
+        setAppointments(list as any);
+        try { localStorage.setItem('crm_appointments_data', JSON.stringify(list)); } catch {}
+      });
+      return;
+    }
     const clinicParam = effectiveClinicId && effectiveClinicId !== 'all' ? `?clinicId=${effectiveClinicId}` : '';
     fetch(`/api/appointments${clinicParam}`)
       .then(res => res.json())
@@ -253,7 +327,7 @@ export default function AppointmentsCalendar() {
     try {
       const activeClinicName = clinics.find(c => c.id === effectiveClinicId)?.name || currentClinic?.name || 'Odonto Premium';
       const result = await performBidirectionalSync(token!, appointments, {
-        defaultClinicId: effectiveClinicId !== 'all' ? effectiveClinicId : '1',
+        defaultClinicId: effectiveClinicId !== 'all' ? effectiveClinicId : (clinics[0]?.id || '1'),
         defaultClinicName: activeClinicName,
       });
 
@@ -294,6 +368,16 @@ export default function AppointmentsCalendar() {
       setIsPullingGoogleEvents(false);
     }
   }, [googleAccessToken, appointments, effectiveClinicId, clinics, currentClinic, addToast]);
+
+  // Vindo do botão "Agendar" da ficha do lead: abre o modal já preenchido
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('crm_schedule_prefill')) {
+        setSelectedSlotForSchedule(null);
+        setShowScheduleModal(true);
+      }
+    } catch {}
+  }, []);
 
   const hasAutoSyncedRef = useRef(false);
 
@@ -631,11 +715,17 @@ export default function AppointmentsCalendar() {
     } catch (e) {
       console.error(e);
     }
-    fetch('/api/appointments', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(finalizedApt)
-    }).catch(console.error);
+    if (isSupabaseConfigured()) {
+      saveAppointmentsToDb([finalizedApt]).then(ok => {
+        if (!ok) addToast('Agendamento salvo só neste navegador: não foi possível gravá-lo no banco de dados.', 'error');
+      });
+    } else {
+      fetch('/api/appointments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(finalizedApt)
+      }).catch(console.error);
+    }
   };
 
   const handleImportAppointments = (updatedList: Appointment[]) => {
@@ -650,11 +740,15 @@ export default function AppointmentsCalendar() {
     }
 
     // Save in batch to backend
-    fetch('/api/appointments/batch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updatedList)
-    }).catch(console.error);
+    if (isSupabaseConfigured()) {
+      saveAppointmentsToDb(updatedList);
+    } else {
+      fetch('/api/appointments/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedList)
+      }).catch(console.error);
+    }
   };
 
   // Data Isolation by Clinic:
@@ -718,9 +812,32 @@ export default function AppointmentsCalendar() {
     return count;
   }, [conflictMap]);
 
+  // Na primeira vez que a semana abre com vários profissionais, começa por um deles (agenda legível);
+  // "Todos os profissionais" continua a um clique.
+  const autoPickedRef = useRef(false);
+
+  // Profissionais cadastrados na(s) clínica(s) + quem já aparece em agendamentos
+  const [dbProfessionalNames, setDbProfessionalNames] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchProfessionalsFromDb(effectiveClinicId).then(list => {
+      if (!cancelled) setDbProfessionalNames(list.map(p => p.name));
+    });
+    return () => { cancelled = true; };
+  }, [effectiveClinicId]);
+
   const professionals = useMemo(() => {
-    return ['Todos', ...new Set((clinicAppointments || []).map(a => a.professional).filter(Boolean))];
-  }, [clinicAppointments]);
+    return ['Todos', ...new Set([...dbProfessionalNames, ...(clinicAppointments || []).map(a => a.professional).filter(Boolean)])];
+  }, [clinicAppointments, dbProfessionalNames]);
+
+  useEffect(() => {
+    if (autoPickedRef.current || viewMode !== 'week' || selectedProfessional !== 'Todos' || clinicAppointments.length === 0) return;
+    const counts = new Map<string, number>();
+    clinicAppointments.forEach(a => { if (a.professional && a.status !== 'cancelled') counts.set(a.professional, (counts.get(a.professional) || 0) + 1); });
+    if (counts.size < 3) return;
+    autoPickedRef.current = true;
+    setSelectedProfessional([...counts.entries()].sort((x, y) => y[1] - x[1])[0][0]);
+  }, [clinicAppointments, viewMode, selectedProfessional]);
 
   const handleExport = () => {
     exportToCSV(filteredAppointments, 'agendamentos_agenda');
@@ -786,11 +903,23 @@ export default function AppointmentsCalendar() {
     return days;
   }, [selectedDate]);
 
+  // Conflitos só do período que está na tela (e sem contar cancelados)
+  const [rangeStart, rangeEnd] =
+    viewMode === 'day' ? [formatDateStr(selectedDate), formatDateStr(selectedDate)]
+    : viewMode === 'week' ? [formatDateStr(weekDays[0]), formatDateStr(weekDays[6])]
+    : viewMode === 'month' ? [formatDateStr(monthDays[0].date), formatDateStr(monthDays[monthDays.length - 1].date)]
+    : [customStartDate, customEndDate];
+  const visibleConflicts = filteredAppointments.filter(
+    a => a.status !== 'cancelled' && a.date >= rangeStart && a.date <= rangeEnd && conflictMap.get(a.id)?.hasConflict
+  ).length;
+
   return (
     <div className="h-full flex flex-col space-y-4 max-w-[1700px] mx-auto">
       {/* Top Clinicorp-Style Bar */}
-      <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
-        <div className="flex items-center gap-3 flex-wrap">
+      <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col gap-3 shrink-0">
+        {/* Linha 1: navegação de data à esquerda, modo de exibição à direita */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
           {/* Hoje button */}
           <button
             onClick={handleJumpToToday}
@@ -798,38 +927,6 @@ export default function AppointmentsCalendar() {
           >
             Hoje
           </button>
-
-          {/* Admin Clinic Filter (Exclusive to Administrators) */}
-          {isAdmin ? (
-            <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800 px-2.5 py-1.5 rounded-xl border border-blue-200 dark:border-blue-900/60 shadow-2xs">
-              <Building2 size={13} className="text-blue-600 dark:text-blue-400 shrink-0" />
-              <span className="text-[9px] font-black uppercase tracking-wider text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-950/80 px-1 py-0.5 rounded border border-blue-200 dark:border-blue-800 shrink-0">
-                Admin
-              </span>
-              <select
-                value={currentClinicId}
-                onChange={(e) => setCurrentClinicId(e.target.value)}
-                className="bg-transparent text-xs font-bold text-slate-800 dark:text-slate-200 outline-none cursor-pointer pr-1"
-                title="Filtrar eventos por clínica (Exclusivo Administrador)"
-              >
-                <option value="all" className="bg-white dark:bg-slate-800 text-slate-900 dark:text-white">
-                  Todas as Clínicas
-                </option>
-                {(clinics || []).map(clinic => (
-                  <option key={clinic.id} value={clinic.id} className="bg-white dark:bg-slate-800 text-slate-900 dark:text-white">
-                    {clinic.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : (
-            <div className="hidden sm:flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800/60 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs shadow-2xs" title="Sua clínica ativa">
-              <Building2 size={13} className="text-slate-400 shrink-0" />
-              <span className="text-xs font-bold text-slate-700 dark:text-slate-300 truncate max-w-[140px]">
-                {currentClinic?.name || 'Unidade Padrão'}
-              </span>
-            </div>
-          )}
 
           {/* Date Range Navigation */}
           <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-800/80 px-2 py-1 rounded-xl border border-slate-200 dark:border-slate-700">
@@ -893,31 +990,7 @@ export default function AppointmentsCalendar() {
             <RotateCw size={14} />
           </button>
 
-          {/* Search bar */}
-          <div className="relative flex-1 sm:flex-initial">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
-            <input 
-              type="text" 
-              placeholder="Buscar pacientes..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-8 pr-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 outline-none w-full sm:w-56 md:w-72 transition-all dark:text-white"
-            />
           </div>
-        </div>
-
-        {/* View mode toggle + Agendar */}
-        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-          {/* Visual Conflict Summary Badge */}
-          {totalConflicts > 0 && (
-            <div 
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 rounded-xl border border-rose-200 dark:border-rose-800 text-xs font-bold shadow-xs animate-pulse"
-              title="Existem agendamentos sobrepostos ou no mesmo horário para o mesmo profissional/unidade"
-            >
-              <AlertTriangle size={14} className="text-rose-600 shrink-0" />
-              <span>{totalConflicts} Conflito{totalConflicts > 1 ? 's' : ''} de Horário</span>
-            </div>
-          )}
 
           <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
             {(['day', 'week', 'month', 'custom'] as const).map((mode) => (
@@ -935,6 +1008,34 @@ export default function AppointmentsCalendar() {
               </button>
             ))}
           </div>
+
+        </div>
+
+        {/* Linha 2: busca à esquerda; alertas, Google, exportar e Agendar à direita */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+          {/* Search bar */}
+          <div className="relative w-full sm:w-72 md:w-80">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
+            <input 
+              type="text" 
+              placeholder="Buscar pacientes..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 outline-none w-full transition-all dark:text-white"
+            />
+          </div>
+
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          {/* Visual Conflict Summary Badge */}
+          {visibleConflicts > 0 && (
+            <div 
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 rounded-xl border border-rose-200 dark:border-rose-800 text-xs font-bold shadow-xs animate-pulse"
+              title="Existem agendamentos sobrepostos ou no mesmo horário para o mesmo profissional/unidade"
+            >
+              <AlertTriangle size={14} className="text-rose-600 shrink-0" />
+              <span>{visibleConflicts} Conflito{visibleConflicts > 1 ? 's' : ''} neste período</span>
+            </div>
+          )}
 
           {/* Google Calendar Sync Button & Quick Pull */}
           <div className="flex items-center gap-1.5">
@@ -1046,6 +1147,7 @@ export default function AppointmentsCalendar() {
             <Plus size={16} />
             <span>Agendar</span>
           </button>
+          </div>
         </div>
       </div>
 
@@ -1195,64 +1297,6 @@ export default function AppointmentsCalendar() {
             </div>
           </div>
 
-          {/* Clinic Filter Section (Admin Only switch, Non-admin read-only) */}
-          {isAdmin ? (
-            <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
-                  <Building2 size={13} className="text-blue-500" />
-                  Clínica
-                </h3>
-                <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
-                  Admin
-                </span>
-              </div>
-              <div className="space-y-1.5">
-                <button
-                  onClick={() => setCurrentClinicId('all')}
-                  className={cn(
-                    "w-full text-left px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-between",
-                    isAllClinicsView
-                      ? "bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
-                      : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                  )}
-                >
-                  <span className="truncate">Todas as Clínicas</span>
-                  {isAllClinicsView && <div className="w-1.5 h-1.5 rounded-full bg-blue-600" />}
-                </button>
-                {(clinics || []).map(clinic => (
-                  <button
-                    key={clinic.id}
-                    onClick={() => setCurrentClinicId(clinic.id)}
-                    className={cn(
-                      "w-full text-left px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-between",
-                      !isAllClinicsView && currentClinicId === clinic.id
-                        ? "bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
-                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                    )}
-                  >
-                    <span className="truncate">{clinic.name}</span>
-                    {!isAllClinicsView && currentClinicId === clinic.id && (
-                      <div className="w-1.5 h-1.5 rounded-full bg-blue-600" />
-                    )}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="bg-white dark:bg-slate-900 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
-                <Building2 size={16} />
-              </div>
-              <div className="overflow-hidden">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Unidade Vinculada</p>
-                <p className="text-xs font-bold text-slate-800 dark:text-white truncate">
-                  {currentClinic?.name || 'Unidade Padrão'}
-                </p>
-              </div>
-            </div>
-          )}
-
           {/* Professionals Filter */}
           <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
             <h3 className="text-xs font-bold text-slate-800 dark:text-white mb-3 uppercase tracking-wider flex items-center gap-1.5">
@@ -1271,7 +1315,10 @@ export default function AppointmentsCalendar() {
                       : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50"
                   )}
                 >
-                  <span className="truncate">{prof}</span>
+                  <span className="truncate flex items-center gap-2">
+                    {prof !== 'Todos' && <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: profColors(prof).border }} />}
+                    {prof}
+                  </span>
                   {selectedProfessional === prof && <div className="w-1.5 h-1.5 rounded-full bg-blue-600" />}
                 </button>
               ))}
@@ -1359,7 +1406,49 @@ export default function AppointmentsCalendar() {
         </div>
 
         {/* Right Main Area: Interactive Schedule Views */}
-        <div className="flex-1 min-w-0 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col overflow-hidden">
+        <div
+          className={cn(
+            "flex-1 min-w-0 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col overflow-hidden",
+            (viewMode === 'week' || viewMode === 'day') && "self-start"
+          )}
+          // Semana: o quadro tem altura própria e só a grade de horários rola. Assim o cabeçalho com
+          // os dias fica sempre visível e cada card continua ligado à sua coluna.
+          style={viewMode === 'week' || viewMode === 'day' ? { height: 'calc(100vh - 262px)', minHeight: 560 } : undefined}
+        >
+          {/* Abas de profissionais: a agenda de cada um em tamanho legível */}
+          {(viewMode === 'week' || viewMode === 'day') && (() => {
+            const rangeDates = viewMode === 'week' ? weekDays.map(d => formatDateStr(d)) : [formatDateStr(selectedDate)];
+            const inRange = clinicAppointments.filter(a => rangeDates.includes(a.date) && a.status !== 'cancelled');
+            const pros = professionals.filter(pn => pn !== 'Todos');
+            if (pros.length < 2) return null;
+            return (
+              <div className="shrink-0 flex items-center gap-2 overflow-x-auto custom-scrollbar px-3 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/60">
+                {['Todos', ...pros].map(pn => {
+                  const count = pn === 'Todos' ? inRange.length : inRange.filter(a => a.professional === pn).length;
+                  const active = selectedProfessional === pn;
+                  const col = pn === 'Todos' ? null : profColors(pn);
+                  return (
+                    <button
+                      key={pn}
+                      onClick={() => setSelectedProfessional(pn)}
+                      className={cn(
+                        "shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-bold transition-all cursor-pointer",
+                        active
+                          ? "text-slate-900 dark:text-white shadow-xs"
+                          : "border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800"
+                      )}
+                      style={active ? { background: col ? col.bg : 'rgba(15,107,120,0.14)', borderColor: col ? col.border : 'rgb(15 107 120)' } : undefined}
+                    >
+                      {col && <span className="w-2.5 h-2.5 rounded-full" style={{ background: col.border }} />}
+                      <span className="max-w-[160px] truncate">{pn === 'Todos' ? 'Todos os profissionais' : pn.split(' ').slice(0, 2).join(' ')}</span>
+                      <span className="text-[10px] font-black opacity-60">{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
           {/* 1. WEEK VIEW (Clinicorp standard 7-day columns) */}
           {viewMode === 'week' && (
             <div className="flex-1 flex flex-col overflow-hidden">
@@ -1373,7 +1462,7 @@ export default function AppointmentsCalendar() {
                 {weekDays.map((day, idx) => {
                   const dateStr = formatDateStr(day);
                   const isToday = dateStr === todayStr;
-                  const dayApts = filteredAppointments.filter(a => a.date === dateStr);
+                  const dayApts = filteredAppointments.filter(a => a.date === dateStr && (selectedStatusFilter === 'cancelled' || a.status !== 'cancelled'));
                   
                   return (
                     <div 
@@ -1411,111 +1500,135 @@ export default function AppointmentsCalendar() {
                 })}
               </div>
 
-              {/* Time rows grid */}
-              <div className="flex-1 overflow-y-auto custom-scrollbar divide-y divide-slate-100 dark:divide-slate-800">
-                {HOURS.map((hour) => {
-                  const hourStr = `${hour.toString().padStart(2, '0')}:00`;
-                  return (
-                    <div key={hour} className="grid grid-cols-[60px_repeat(7,1fr)] min-h-[90px]">
-                      {/* Hour label */}
-                      <div className="p-2 text-[10px] font-bold text-slate-400 text-center border-r border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-800/20 select-none">
-                        {hourStr}
+              {/* Grade contínua: 1 coluna por dia; cada card é posicionado pelo horário e a altura segue a duração */}
+              {(() => {
+                // Cancelados não ocupam horário: só aparecem se o filtro de status for "Cancelado"
+                const gridApts = filteredAppointments.filter(a => selectedStatusFilter === 'cancelled' || a.status !== 'cancelled');
+                const weekApts = weekDays.flatMap(d => gridApts.filter(a => a.date === formatDateStr(d)));
+                const first = weekApts.length ? Math.min(...weekApts.map(a => Math.floor(timeToMinutes(a.time) / 60))) : 7;
+                const last = weekApts.length ? Math.max(...weekApts.map(a => Math.ceil((timeToMinutes(a.time) + (a.duration || 30)) / 60))) : 21;
+                const gridStart = Math.min(7, first);
+                const gridEnd = Math.max(22, last);
+                const hours = Array.from({ length: gridEnd - gridStart }, (_, i) => gridStart + i);
+                const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+
+                return (
+                  <div className="flex-1 overflow-y-auto custom-scrollbar">
+                    <div className="grid grid-cols-[60px_repeat(7,minmax(0,1fr))]" style={{ height: hours.length * HOUR_PX }}>
+                      {/* Rótulos de hora */}
+                      <div className="relative border-r border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-800/20 select-none">
+                        {hours.map(h => (
+                          <div key={h} className={cn("absolute inset-x-0 text-[10px] font-bold text-slate-400 text-center", h === gridStart ? "pt-1" : "-translate-y-1/2")} style={{ top: (h - gridStart) * HOUR_PX }}>
+                            {String(h).padStart(2, '0')}:00
+                          </div>
+                        ))}
                       </div>
 
-                      {/* 7 Days Columns */}
                       {weekDays.map((day, dIdx) => {
                         const dateStr = formatDateStr(day);
-                        const aptsInSlot = filteredAppointments.filter(a => {
-                          const aptHour = parseInt(a.time.split(':')[0]);
-                          return aptHour === hour && a.date === dateStr;
-                        });
+                        const dayApts = layoutDayAppointments(gridApts.filter(a => a.date === dateStr));
+                        const isToday = dateStr === todayStr;
 
                         return (
-                          <div 
-                            key={dIdx} 
+                          <div
+                            key={dIdx}
                             onClick={(e) => {
                               if ((e.target as HTMLElement).closest('.appointment-card')) return;
-                              handleOpenSlot(dateStr, hourStr);
+                              const y = e.clientY - (e.currentTarget as HTMLElement).getBoundingClientRect().top;
+                              const minutes = gridStart * 60 + Math.floor((y / HOUR_PX) * 2) * 30; // arredonda para 30 min
+                              handleOpenSlot(dateStr, minutesToTime(minutes));
                             }}
-                            className="p-1 border-r border-slate-100 dark:border-slate-800/60 last:border-r-0 hover:bg-blue-50/20 dark:hover:bg-blue-900/5 transition-colors relative group/slot cursor-pointer flex flex-col gap-1"
+                            className={cn(
+                              "relative border-r border-slate-100 dark:border-slate-800/60 last:border-r-0 cursor-pointer hover:bg-blue-50/20 dark:hover:bg-blue-900/5 transition-colors",
+                              isToday && "bg-blue-50/30 dark:bg-blue-950/20"
+                            )}
                           >
-                            {aptsInSlot.map((apt) => {
+                            {hours.map(h => (
+                              <div key={h} className="absolute inset-x-0 border-t border-slate-100 dark:border-slate-800 pointer-events-none" style={{ top: (h - gridStart) * HOUR_PX }} />
+                            ))}
+
+                            {isToday && nowMin >= gridStart * 60 && nowMin <= gridEnd * 60 && (
+                              <div className="absolute inset-x-0 border-t-2 border-rose-500 z-20 pointer-events-none" style={{ top: ((nowMin - gridStart * 60) / 60) * HOUR_PX }} />
+                            )}
+
+                            {dayApts.map(({ apt, start, end, realEnd, lane, lanes, span }) => {
                               const conf = STATUS_CONFIG[apt.status] || STATUS_CONFIG.pending;
                               const conflictInfo = conflictMap.get(apt.id);
                               const hasConflict = conflictInfo?.hasConflict;
+                              const height = Math.max(((end - start) / 60) * HOUR_PX - 2, MIN_CARD_PX);
+                              // Simultâneos ficam lado a lado (como no Clinicorp); com 2+ o card fica compacto
+                              const widthPct = (100 / lanes) * span;
+                              const leftPct = lane * (100 / lanes);
+                              const compact = widthPct < 60;
+                              const tiny = widthPct < 22;
+                              const pc = profColors(apt.professional);
 
                               return (
-                                <div 
+                                <div
                                   key={apt.id}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setSelectedAppointmentDetail(apt);
                                   }}
+                                  title={`${apt.time} – ${minutesToTime(realEnd)} · ${apt.patient} · ${apt.procedure}${apt.professional ? ` · ${apt.professional}` : ''}`}
                                   className={cn(
-                                    "appointment-card p-2 rounded-xl border-l-4 shadow-2xs transition-all hover:scale-[1.02] hover:shadow-md cursor-pointer relative group/card",
-                                    hasConflict 
-                                      ? "bg-rose-50/90 dark:bg-rose-950/50 border-rose-500 ring-2 ring-rose-400/60" 
-                                      : cn(conf.bg, conf.border)
+                                    "appointment-card absolute rounded-lg border-l-4 shadow-2xs overflow-hidden px-1.5 py-1 cursor-pointer hover:shadow-md hover:z-10 transition-shadow",
+                                    hasConflict && "ring-1 ring-rose-500",
+                                    apt.status === 'cancelled' && "opacity-50 line-through"
                                   )}
+                                  style={{
+                                    background: pc.bg,
+                                    borderLeftColor: hasConflict ? 'rgb(244 63 94)' : pc.border,
+                                    top: ((start - gridStart * 60) / 60) * HOUR_PX + 1,
+                                    height,
+                                    left: `calc(${leftPct}% + 1px)`,
+                                    width: `calc(${widthPct}% - 2px)`
+                                  }}
                                 >
-                                  <div className="flex items-center justify-between gap-1">
-                                    <span className="font-mono text-[9px] font-black text-slate-700 dark:text-slate-300">
-                                      {apt.time}
-                                    </span>
-                                    <div className="flex items-center gap-1">
-                                      <GoogleSyncBadge 
-                                        status={getAptSyncStatus(apt)} 
-                                        errorMsg={apt.googleSyncError}
-                                        compact
-                                        size="xs"
-                                        onRetry={(e) => {
-                                          e.stopPropagation();
-                                          handleRetryAppointmentSync(apt);
-                                        }}
-                                      />
-                                      <span className={cn("text-[8px] font-bold px-1.5 py-0.2 rounded-full", conf.color, "text-white")}>
-                                        {conf.label}
-                                      </span>
+                                  {height < 36 ? (
+                                    /* Card baixo (agendamento curto): horário e nome na mesma linha */
+                                    <div className="flex items-center gap-1 leading-none h-full">
+                                      {widthPct >= 34 && <span className="font-mono text-[9px] font-black text-slate-700 dark:text-slate-300 shrink-0">{apt.time}</span>}
+                                      <span className="text-[11px] font-bold text-slate-900 dark:text-white truncate">{compact ? String(apt.patient).split(' ')[0] : apt.patient}</span>
+                                      {hasConflict
+                                        ? <AlertTriangle size={10} className="text-rose-600 dark:text-rose-400 shrink-0 ml-auto" />
+                                        : <span className={cn("w-2 h-2 rounded-full shrink-0 ml-auto", conf.color)} title={conf.label} />}
                                     </div>
-                                  </div>
-                                  <h4 className="text-[11px] font-bold text-slate-900 dark:text-white mt-1 truncate">
-                                    {apt.patient}
-                                  </h4>
-                                  <p className="text-[9.5px] text-slate-500 dark:text-slate-400 truncate">
-                                    {apt.procedure}
-                                  </p>
-                                  <div className="flex items-center gap-1 text-[8.5px] text-slate-400 mt-1 truncate">
-                                    <Stethoscope size={9} />
-                                    <span className="truncate">{apt.professional}</span>
-                                  </div>
-
-                                  {hasConflict && (
-                                    <div 
-                                      className="mt-1.5 px-1.5 py-0.5 rounded-md bg-rose-200/80 dark:bg-rose-900/60 text-rose-800 dark:text-rose-200 text-[8px] font-black flex items-center gap-1 border border-rose-300 dark:border-rose-700"
-                                      title={`Conflito de horário com: ${conflictInfo.conflictingWith.map(c => c.patient).join(', ')}`}
-                                    >
-                                      <AlertTriangle size={9} className="text-rose-600 dark:text-rose-400 shrink-0" />
-                                      <span className="truncate">CONFLITO</span>
-                                    </div>
+                                  ) : (
+                                    <>
+                                  <div className="flex items-center justify-between gap-1 leading-none">
+                                        {!tiny && (
+                                          <span className="font-mono text-[9px] font-black text-slate-700 dark:text-slate-300 truncate">
+                                            {compact ? apt.time : `${apt.time}–${minutesToTime(realEnd)}`}
+                                          </span>
+                                        )}
+                                        {hasConflict ? (
+                                          <AlertTriangle size={10} className="text-rose-600 dark:text-rose-400 shrink-0" />
+                                        ) : (
+                                          <span className={cn("w-2 h-2 rounded-full shrink-0", conf.color)} title={conf.label} />
+                                        )}
+                                      </div>
+                                      <h4 className="text-[11px] font-bold text-slate-900 dark:text-white mt-0.5 truncate leading-tight">{compact ? String(apt.patient).split(' ')[0] : apt.patient}</h4>
+                                      {height >= 56 && <p className="text-[9.5px] text-slate-500 dark:text-slate-400 truncate leading-tight">{apt.procedure}</p>}
+                                      {height >= 76 && apt.professional && (
+                                        <div className="flex items-center gap-1 text-[8.5px] text-slate-400 mt-0.5 truncate">
+                                          <Stethoscope size={9} className="shrink-0" />
+                                          <span className="truncate">{apt.professional}</span>
+                                        </div>
+                                      )}
+    
+                                    </>
                                   )}
                                 </div>
                               );
                             })}
-
-                            {aptsInSlot.length === 0 && (
-                              <div className="w-full h-full min-h-[40px] flex items-center justify-center opacity-0 group-hover/slot:opacity-100 transition-opacity">
-                                <span className="text-[9px] font-bold text-blue-500 bg-blue-50 dark:bg-blue-900/40 px-2 py-0.5 rounded-md flex items-center gap-1">
-                                  <Plus size={10} /> + Agendar
-                                </span>
-                              </div>
-                            )}
                           </div>
                         );
                       })}
                     </div>
-                  );
-                })}
-              </div>
+                  </div>
+                );
+              })()}
                 </div>
               </div>
             </div>
@@ -1638,118 +1751,119 @@ export default function AppointmentsCalendar() {
             </div>
           )}
 
-          {/* 3. DAY VIEW */}
-          {viewMode === 'day' && (
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
-              {HOURS.map((hour) => {
-                const hourStr = `${hour.toString().padStart(2, '0')}:00`;
-                const dateStr = formatDateStr(selectedDate);
-                const aptsInHour = filteredAppointments.filter(a => {
-                  const aptHour = parseInt(a.time.split(':')[0]);
-                  return aptHour === hour && a.date === dateStr;
-                });
+          {/* 3. DAY VIEW: uma coluna por profissional (como a agenda do Clinicorp) */}
+          {viewMode === 'day' && (() => {
+            const dateStr = formatDateStr(selectedDate);
+            const dayAll = filteredAppointments.filter(a => a.date === dateStr && (selectedStatusFilter === 'cancelled' || a.status !== 'cancelled'));
+            const base = selectedProfessional !== 'Todos' ? [selectedProfessional] : professionals.filter(pn => pn !== 'Todos');
+            const extra = Array.from(new Set(dayAll.map(a => a.professional).filter(pn => pn && !base.includes(pn)))) as string[];
+            const hasNone = dayAll.some(a => !a.professional);
+            const names = [...base, ...extra, ...(hasNone ? ['Sem profissional'] : [])];
+            const first = dayAll.length ? Math.min(...dayAll.map(a => Math.floor(timeToMinutes(a.time) / 60))) : 7;
+            const last = dayAll.length ? Math.max(...dayAll.map(a => Math.ceil((timeToMinutes(a.time) + (a.duration || 30)) / 60))) : 21;
+            const gridStart = Math.min(7, first);
+            const gridEnd = Math.max(22, last);
+            const hours = Array.from({ length: gridEnd - gridStart }, (_, i) => gridStart + i);
+            const cols = `60px repeat(${Math.max(names.length, 1)}, minmax(190px, 1fr))`;
+            const isToday = dateStr === todayStr;
+            const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
 
-                return (
-                  <div key={hour} className="flex gap-4 group">
-                    <div className="w-14 pt-2 text-right shrink-0">
-                      <span className="text-xs font-bold text-slate-400 font-mono">{hourStr}</span>
+            if (dayAll.length === 0 && names.length === 0) {
+              return <div className="flex-1 flex items-center justify-center text-sm text-slate-400">Nenhum agendamento neste dia.</div>;
+            }
+
+            return (
+              <div className="flex-1 overflow-auto custom-scrollbar">
+                <div className="min-w-full">
+                  {/* Cabeçalho: um profissional por coluna (fica fixo ao rolar) */}
+                  <div className="grid sticky top-0 z-30 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800" style={{ gridTemplateColumns: cols }}>
+                    <div className="sticky left-0 z-40 p-3 text-[10px] font-bold text-slate-400 uppercase text-center bg-slate-50 dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800">Hora</div>
+                    {names.map(pn => {
+                      const count = dayAll.filter(a => (a.professional || 'Sem profissional') === pn).length;
+                      return (
+                        <div key={pn} className="p-2.5 text-center border-r border-slate-200 dark:border-slate-800 last:border-r-0 min-w-0">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: profColors(pn).border }} />
+                            <span className="text-xs font-bold text-slate-800 dark:text-white truncate">{pn}</span>
+                          </div>
+                          <span className="text-[10px] font-bold text-slate-400">{count} {count === 1 ? 'paciente' : 'pacientes'}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="grid" style={{ gridTemplateColumns: cols, height: hours.length * HOUR_PX }}>
+                    <div className="sticky left-0 z-20 relative border-r border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 select-none">
+                      {hours.map(h => (
+                        <div key={h} className={cn("absolute inset-x-0 text-[10px] font-bold text-slate-400 text-center", h === gridStart ? "pt-1" : "-translate-y-1/2")} style={{ top: (h - gridStart) * HOUR_PX }}>
+                          {String(h).padStart(2, '0')}:00
+                        </div>
+                      ))}
                     </div>
 
-                    <div className="flex-1 min-h-[50px] relative">
-                      <div className="absolute top-4 left-0 right-0 h-px bg-slate-100 dark:bg-slate-800 z-0" />
+                    {names.map(pn => {
+                      const colApts = layoutDayAppointments(dayAll.filter(a => (a.professional || 'Sem profissional') === pn));
+                      return (
+                        <div
+                          key={pn}
+                          onClick={(e) => {
+                            if ((e.target as HTMLElement).closest('.appointment-card')) return;
+                            const y = e.clientY - (e.currentTarget as HTMLElement).getBoundingClientRect().top;
+                            handleOpenSlot(dateStr, minutesToTime(gridStart * 60 + Math.floor((y / HOUR_PX) * 2) * 30));
+                          }}
+                          className="relative border-r border-slate-100 dark:border-slate-800/60 last:border-r-0 cursor-pointer hover:bg-blue-50/20 dark:hover:bg-blue-900/5 transition-colors min-w-0"
+                        >
+                          {hours.map(h => (
+                            <div key={h} className="absolute inset-x-0 border-t border-slate-100 dark:border-slate-800 pointer-events-none" style={{ top: (h - gridStart) * HOUR_PX }} />
+                          ))}
+                          {isToday && nowMin >= gridStart * 60 && nowMin <= gridEnd * 60 && (
+                            <div className="absolute inset-x-0 border-t-2 border-rose-500 z-20 pointer-events-none" style={{ top: ((nowMin - gridStart * 60) / 60) * HOUR_PX }} />
+                          )}
 
-                      {aptsInHour.length > 0 ? (
-                        <div className="space-y-2 relative z-10">
-                          {aptsInHour.map((apt) => {
+                          {colApts.map(({ apt, start, end, realEnd, lane, lanes, span }) => {
                             const conf = STATUS_CONFIG[apt.status] || STATUS_CONFIG.pending;
-                            const conflictInfo = conflictMap.get(apt.id);
-                            const hasConflict = conflictInfo?.hasConflict;
-
+                            const hasConflict = conflictMap.get(apt.id)?.hasConflict;
+                            const pc = profColors(apt.professional);
+                            const height = Math.max(((end - start) / 60) * HOUR_PX - 2, MIN_CARD_PX);
                             return (
-                              <motion.div 
+                              <div
                                 key={apt.id}
-                                initial={{ opacity: 0, scale: 0.98 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                onClick={() => setSelectedAppointmentDetail(apt)}
+                                onClick={(e) => { e.stopPropagation(); setSelectedAppointmentDetail(apt); }}
+                                title={`${apt.time} – ${minutesToTime(realEnd)} · ${apt.patient} · ${apt.procedure}`}
                                 className={cn(
-                                  "p-3.5 rounded-2xl border-l-4 shadow-sm transition-all cursor-pointer hover:shadow-md",
-                                  hasConflict 
-                                    ? "bg-rose-50/90 dark:bg-rose-950/40 border-rose-500 ring-2 ring-rose-400/70"
-                                    : cn(conf.bg, conf.border)
+                                  "appointment-card absolute rounded-lg border-l-4 shadow-2xs overflow-hidden px-2 py-1 cursor-pointer hover:shadow-md hover:z-10 transition-shadow",
+                                  hasConflict && "ring-1 ring-rose-500",
+                                  apt.status === 'cancelled' && "opacity-50 line-through"
                                 )}
+                                style={{
+                                  background: pc.bg,
+                                  borderLeftColor: hasConflict ? 'rgb(244 63 94)' : pc.border,
+                                  top: ((start - gridStart * 60) / 60) * HOUR_PX + 1,
+                                  height,
+                                  left: `calc(${lane * (100 / lanes)}% + 2px)`,
+                                  width: `calc(${(100 / lanes) * span}% - 4px)`
+                                }}
                               >
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 rounded-full bg-white dark:bg-slate-800 flex items-center justify-center border border-slate-200 dark:border-slate-700 shadow-2xs text-slate-600 dark:text-slate-300 font-bold text-xs">
-                                      {apt.patient.split(' ').map(n => n[0]).join('').slice(0, 2)}
-                                    </div>
-                                    <div>
-                                      <div className="flex items-center gap-2">
-                                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">{apt.patient}</h4>
-                                        {hasConflict && (
-                                          <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-rose-200 dark:bg-rose-900/60 text-rose-800 dark:text-rose-200 flex items-center gap-1">
-                                            <AlertTriangle size={10} className="text-rose-600" />
-                                            Conflito
-                                          </span>
-                                        )}
-                                      </div>
-                                      <p className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.5">
-                                        <span className="font-semibold text-blue-600">{apt.procedure}</span>
-                                        <span>•</span>
-                                        <span>{apt.professional}</span>
-                                      </p>
-                                    </div>
-                                  </div>
-
-                                  <div className="flex items-center gap-3">
-                                    <div className="text-right">
-                                      <span className="font-mono text-xs font-bold text-slate-800 dark:text-white">{apt.time}</span>
-                                      <p className="text-[9px] text-slate-400">{apt.duration} min</p>
-                                    </div>
-                                    <GoogleSyncBadge 
-                                      status={getAptSyncStatus(apt)} 
-                                      errorMsg={apt.googleSyncError}
-                                      size="xs"
-                                      onRetry={(e) => {
-                                        e.stopPropagation();
-                                        handleRetryAppointmentSync(apt);
-                                      }}
-                                    />
-                                    <span className={cn("text-[9px] font-bold px-2.5 py-1 rounded-full text-white", conf.color)}>
-                                      {conf.label}
-                                    </span>
-                                  </div>
+                                <div className="flex items-center justify-between gap-1 leading-none">
+                                  <span className="font-mono text-[10px] font-black text-slate-700 dark:text-slate-300 truncate">{apt.time}–{minutesToTime(realEnd)}</span>
+                                  {hasConflict
+                                    ? <AlertTriangle size={11} className="text-rose-600 dark:text-rose-400 shrink-0" />
+                                    : <span className={cn("w-2 h-2 rounded-full shrink-0", conf.color)} title={conf.label} />}
                                 </div>
-
-                                {hasConflict && (
-                                  <div className="mt-2.5 p-2 rounded-xl bg-rose-100/70 dark:bg-rose-900/30 border border-rose-200 dark:border-rose-800 text-[11px] text-rose-800 dark:text-rose-200 flex items-center justify-between">
-                                    <div className="flex items-center gap-1.5">
-                                      <AlertTriangle size={12} className="text-rose-600 shrink-0" />
-                                      <span>Colisão com: <strong>{conflictInfo.conflictingWith.map(c => `${c.patient} (${c.time})`).join(', ')}</strong></span>
-                                    </div>
-                                    <span className="text-[9px] font-bold text-rose-600 dark:text-rose-400 underline cursor-pointer">
-                                      Verificar Horário
-                                    </span>
-                                  </div>
-                                )}
-                              </motion.div>
+                                <h4 className="text-xs font-bold text-slate-900 dark:text-white mt-0.5 truncate leading-tight">{apt.patient}</h4>
+                                {height >= 52 && <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate leading-tight">{apt.procedure}</p>}
+                                {height >= 72 && apt.phone && <p className="text-[10px] text-slate-400 truncate font-mono">{apt.phone}</p>}
+                              </div>
                             );
                           })}
                         </div>
-                      ) : (
-                        <button 
-                          onClick={() => handleOpenSlot(dateStr, hourStr)}
-                          className="w-full h-11 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 hover:border-blue-400 dark:hover:border-blue-600 hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-all flex items-center justify-center text-slate-300 hover:text-blue-600 text-xs font-semibold relative z-10 gap-1"
-                        >
-                          <Plus size={14} /> Horário livre
-                        </button>
-                      )}
-                    </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
-            </div>
-          )}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* 4. CUSTOM VIEW (Personalizado with interactive range calendar, timeline grouping, and metrics) */}
           {viewMode === 'custom' && (
@@ -2448,8 +2562,8 @@ export default function AppointmentsCalendar() {
           initialDate={selectedSlotForSchedule?.date}
           initialTime={selectedSlotForSchedule?.time}
           onAddAppointment={handleAddAppointment}
-          clinicId={effectiveClinicId !== 'all' ? effectiveClinicId : '1'}
-          clinicName={clinics.find(c => c.id === effectiveClinicId)?.name || currentClinic?.name || 'Odonto Premium'}
+          clinicId={effectiveClinicId !== 'all' ? effectiveClinicId : (clinics[0]?.id || '1')}
+          clinicName={clinics.find(c => c.id === effectiveClinicId)?.name || currentClinic?.name || clinics[0]?.name || 'Clínica'}
         />
       )}
 
