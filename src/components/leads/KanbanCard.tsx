@@ -17,6 +17,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@/src/lib/utils';
 import { STAGE_VAR } from '@/src/lib/stageColors';
+import { formatPhoneBR } from '@/src/lib/supabase';
 
 interface KanbanCardProps {
   key?: string | number;
@@ -282,7 +283,7 @@ export default function KanbanCard({
         <div className={cn(
           "flex items-center justify-between border-t border-[var(--color-border-subtle)] pt-1.5 text-[9px]",
         )}>
-          <span className="text-[var(--color-text-muted)] font-mono font-normal truncate">{lead.whatsapp}</span>
+          <span className="text-[var(--color-text-muted)] font-mono font-normal truncate">{formatPhoneBR(lead.whatsapp || lead.phone)}</span>
           <button 
             onClick={(e) => {
               e.stopPropagation();

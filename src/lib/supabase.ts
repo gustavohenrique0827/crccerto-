@@ -108,6 +108,21 @@ const originToDb = (label?: string): string => {
   return 'manual';
 };
 
+/** Só dígitos. */
+export const phoneDigits = (v?: string | null) => String(v || '').replace(/\D/g, '');
+/** Chave de comparação: os 8 últimos dígitos ignoram DDI, DDD, 9º dígito e formatação. */
+export const phoneKey = (v?: string | null) => { const d = phoneDigits(v); return d.length >= 8 ? d.slice(-8) : ''; };
+
+/** +55 (63) 99965-3869 — número brasileiro legível; outros formatos são devolvidos como vieram. */
+export function formatPhoneBR(v?: string | null): string {
+  const d = phoneDigits(v);
+  if (!d) return '';
+  const n = d.startsWith('55') && (d.length === 12 || d.length === 13) ? d.slice(2) : d;
+  if (n.length === 11) return `+55 (${n.slice(0, 2)}) ${n.slice(2, 7)}-${n.slice(7)}`;
+  if (n.length === 10) return `+55 (${n.slice(0, 2)}) ${n.slice(2, 6)}-${n.slice(6)}`;
+  return String(v);
+}
+
 export type DbLead = Lead & { notes?: string };
 
 export function rowToLead(row: any): DbLead {
@@ -437,6 +452,7 @@ export async function saveLeadToDb(lead: DbLead): Promise<boolean> {
 
 export interface DuplicateCheckResult {
   isDuplicate: boolean;
+  duplicateField?: 'phone' | 'email';
   existingLead?: any;
   message?: string;
 }
@@ -477,14 +493,25 @@ export async function checkLeadDuplicateInDb(
   }
 
   try {
-    let q = sb.from('leads').select('id,name,phone,whatsapp,email,clinic_id');
-    if (clinicId && clinicId !== 'all') q = q.eq('clinic_id', clinicId);
-    const filters: string[] = [];
-    if (phone) filters.push(`phone.eq.${phone}`, `whatsapp.eq.${phone}`);
-    if (email) filters.push(`email.eq.${email}`);
-    const { data } = await q.or(filters.join(',')).limit(1);
-    if (data && data.length > 0) {
-      return { isDuplicate: true, existingLead: data[0], message: `Lead já registrado no sistema: ${data[0].name}` };
+    // Compara pelos 8 últimos dígitos (o telefone está gravado em formatos diferentes) e pelo e-mail
+    const key = phoneKey(phone);
+    for (let from = 0; ; from += 1000) {
+      let q = sb.from('leads').select('id,name,phone,whatsapp,email,status,responsible_name,clinic_id').range(from, from + 999);
+      if (clinicId && clinicId !== 'all') q = q.eq('clinic_id', clinicId);
+      const { data } = await q;
+      const hit = (data || []).find((r: any) =>
+        (key && (phoneKey(r.phone) === key || phoneKey(r.whatsapp) === key)) ||
+        (email && (r.email || '').trim().toLowerCase() === email));
+      if (hit) {
+        const byPhone = key && (phoneKey(hit.phone) === key || phoneKey(hit.whatsapp) === key);
+        return {
+          isDuplicate: true,
+          existingLead: { ...hit, responsibleName: hit.responsible_name },
+          message: `Já existe um lead com ${byPhone ? 'este telefone' : 'este e-mail'}: ${hit.name} (${formatPhoneBR(hit.phone) || hit.email}).`,
+          duplicateField: byPhone ? 'phone' : 'email'
+        } as DuplicateCheckResult;
+      }
+      if (!data || data.length < 1000) break;
     }
   } catch {}
 

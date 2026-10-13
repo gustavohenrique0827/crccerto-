@@ -43,7 +43,7 @@ import {
 import { Lead } from '@/src/types';
 import { cn } from '@/src/lib/utils';
 import { useApp } from '@/src/context/AppContext';
-import { fetchLeadTimelineFromDb, LeadTimelineItem, updateLeadEverywhere, addLeadNote, deleteLeadNote, isSupabaseConfigured, isUuid } from '@/src/lib/supabase';
+import { fetchLeadTimelineFromDb, LeadTimelineItem, updateLeadEverywhere, addLeadNote, deleteLeadNote, isSupabaseConfigured, isUuid, formatPhoneBR } from '@/src/lib/supabase';
 
 interface LeadDetailProps {
   isOpen: boolean;
@@ -539,7 +539,7 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
             <div className="grid grid-cols-3 border-b border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-950 text-center">
               <div className="p-3 border-r border-slate-100 dark:border-slate-800">
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-0.5">WhatsApp</span>
-                <span className="text-[10px] font-bold text-slate-800 dark:text-slate-200 truncate block">{lead.whatsapp || lead.phone || '-'}</span>
+                <span className="text-[10px] font-bold text-slate-800 dark:text-slate-200 truncate block">{formatPhoneBR(lead.whatsapp || lead.phone) || '-'}</span>
               </div>
               <div className="p-3 border-r border-slate-100 dark:border-slate-800">
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-0.5">Notas</span>
