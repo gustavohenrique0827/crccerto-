@@ -106,7 +106,7 @@ export default function DashboardMain({ selectedClinicId }: DashboardMainProps) 
   const isConsolidated = selectedClinicId === 'all';
   const currentClinicObj = clinics.find(c => c.id === selectedClinicId);
 
-  if (loading || !stats) {
+  if (!stats) {
     return (
       <div className="h-64 flex flex-col items-center justify-center gap-3">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--color-primary-blue)]" />
@@ -127,7 +127,7 @@ export default function DashboardMain({ selectedClinicId }: DashboardMainProps) 
   ];
 
   return (
-    <div className="max-w-[1600px] mx-auto pb-12 space-y-8 animate-fade-in">
+    <div className={cn("max-w-[1600px] mx-auto pb-12 space-y-8 animate-fade-in transition-opacity", loading && "opacity-60")} aria-busy={loading}>
       {/* 1. TOP HEADER & FILTER BAR */}
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-[var(--color-border-default)]">

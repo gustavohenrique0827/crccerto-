@@ -1078,13 +1078,36 @@ async function filterNewLeads(leads: Lead[], clinicId?: string): Promise<Lead[]>
   });
 }
 
-/** Limites (YYYY-MM-DD) de cada opção do seletor de período do dashboard. */
-function rangeBounds(range?: string): [string, string] {
+const ymdLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/**
+ * Limites (YYYY-MM-DD) de cada opção do seletor de período do dashboard.
+ * Ids: hoje, ontem, 7d, 30d, 90d, semana, semana_ant, mes, mes_ant, ano, ou custom:AAAA-MM-DD:AAAA-MM-DD.
+ * "Hoje" segue o dia de atendimento (vai até 00h30).
+ */
+export function rangeBounds(range?: string): [string, string] {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - DAY_END_MINUTES);
+  const at = (offset: number) => { const d = new Date(now); d.setDate(d.getDate() + offset); return ymdLocal(d); };
+  const today = at(0);
+
+  if (range?.startsWith('custom:')) {
+    const [, from, to] = range.split(':');
+    const f = from || to || today, t = to || from || today;
+    return f <= t ? [f, t] : [t, f];
+  }
+  const dow = now.getDay(); // 0 = domingo
   switch (range) {
-    case 'hoje': return [dayKey(0), dayKey(0)];
-    case 'ontem': return [dayKey(-1), dayKey(-1)];
-    case '7d': return [dayKey(-6), dayKey(0)];
-    default: return [dayKey(-29), dayKey(0)];
+    case 'hoje': return [today, today];
+    case 'ontem': return [at(-1), at(-1)];
+    case '7d': return [at(-6), today];
+    case '90d': return [at(-89), today];
+    case 'semana': return [at(-dow), today];
+    case 'semana_ant': return [at(-dow - 7), at(-dow - 1)];
+    case 'mes': return [ymdLocal(new Date(now.getFullYear(), now.getMonth(), 1)), today];
+    case 'mes_ant': return [ymdLocal(new Date(now.getFullYear(), now.getMonth() - 1, 1)), ymdLocal(new Date(now.getFullYear(), now.getMonth(), 0))];
+    case 'ano': return [`${now.getFullYear()}-01-01`, today];
+    default: return [at(-29), today];
   }
 }
 
