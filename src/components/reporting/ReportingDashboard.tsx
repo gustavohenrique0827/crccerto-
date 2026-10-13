@@ -10,23 +10,14 @@ import {
   Sparkles
 } from 'lucide-react';
 import { useApp } from '@/src/context/AppContext';
+import { useClinicDataset } from '@/src/lib/supabase';
 import { exportToCSV } from '@/src/lib/exportUtils';
 
 export default function ReportingDashboard() {
-  const { leads, addToast } = useApp();
+  const { leads, addToast, currentClinicId } = useApp();
+  const { appointments: dbAppointments } = useClinicDataset(currentClinicId);
 
-  const [appointmentsCount] = useState(() => {
-    try {
-      const raw = localStorage.getItem('crm_appointments_data');
-      if (raw) {
-        const arr = JSON.parse(raw);
-        return Array.isArray(arr) ? arr.length : 0;
-      }
-    } catch {
-      // ignore
-    }
-    return 0;
-  });
+  const appointmentsCount = dbAppointments.length;
 
   const [revenueTotal] = useState(() => {
     try {
@@ -58,8 +49,7 @@ export default function ReportingDashboard() {
 
   const handleExportOperational = () => {
     try {
-      const raw = localStorage.getItem('crm_appointments_data');
-      const appts = raw ? JSON.parse(raw) : [];
+      const appts = dbAppointments;
       if (appts.length === 0) {
         addToast('Não há agendamentos para exportar no momento.', 'info');
         return;

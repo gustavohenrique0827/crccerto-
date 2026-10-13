@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { MainSidebar } from './components/layout/MainSidebar';
 import { Topbar } from './components/layout/Topbar';
 import { 
@@ -20,26 +20,26 @@ import { Role } from './types';
 
 // Workspaces and Views
 import DashboardMain from './components/dashboard/DashboardMain';
-import Pipeline from './components/leads/Pipeline';
+const Pipeline = lazy(() => import('./components/leads/Pipeline'));
 import LeadDetail from './components/leads/LeadDetail';
-import PatientsList from './components/patients/PatientsList';
-import AppointmentsCalendar from './components/appointments/AppointmentsCalendar';
-import FollowUpWorkspace from './components/followups/FollowUpWorkspace';
-import TaskWorkspace from './components/tasks/TaskWorkspace';
-import DataAnalysisWorkspace from './components/analytics/DataAnalysisWorkspace';
-import AnalyticsCenter from './components/analytics/AnalyticsCenter';
-import IntegrationsWorkspace from './components/integrations/IntegrationsWorkspace';
-import TeamManagement from './components/team/TeamManagement';
-import ClinicList from './components/clinics/ClinicList';
-import SystemSettings from './components/settings/SystemSettings';
-import SystemWalkthroughGuide from './components/guide/SystemWalkthroughGuide';
-import AIAssistant from './components/ai/AIAssistant';
+const PatientsList = lazy(() => import('./components/patients/PatientsList'));
+const AppointmentsCalendar = lazy(() => import('./components/appointments/AppointmentsCalendar'));
+const FollowUpWorkspace = lazy(() => import('./components/followups/FollowUpWorkspace'));
+const TaskWorkspace = lazy(() => import('./components/tasks/TaskWorkspace'));
+const DataAnalysisWorkspace = lazy(() => import('./components/analytics/DataAnalysisWorkspace'));
+const AnalyticsCenter = lazy(() => import('./components/analytics/AnalyticsCenter'));
+const IntegrationsWorkspace = lazy(() => import('./components/integrations/IntegrationsWorkspace'));
+const TeamManagement = lazy(() => import('./components/team/TeamManagement'));
+const ClinicList = lazy(() => import('./components/clinics/ClinicList'));
+const SystemSettings = lazy(() => import('./components/settings/SystemSettings'));
+const SystemWalkthroughGuide = lazy(() => import('./components/guide/SystemWalkthroughGuide'));
+const AIAssistant = lazy(() => import('./components/ai/AIAssistant'));
 
 // Modals & Protection
 import TaskModal from './components/dashboard/TaskModal';
 import NewLeadModal from './components/leads/NewLeadModal';
-import NewClinicModal from './components/clinics/NewClinicModal';
-import ClinicHealthDrawer from './components/clinics/ClinicHealthDrawer';
+const NewClinicModal = lazy(() => import('./components/clinics/NewClinicModal'));
+const ClinicHealthDrawer = lazy(() => import('./components/clinics/ClinicHealthDrawer'));
 import ToastContainer from './components/layout/ToastContainer';
 import LoginPage from './LoginPage';
 import LogoutConfirmationModal from './components/auth/LogoutConfirmationModal';
@@ -151,6 +151,7 @@ export default function App() {
 
         {/* Dynamic Content Workspace */}
         <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 pb-24 sm:pb-8 relative z-10 custom-scrollbar">
+          <Suspense fallback={<div className="h-64 flex items-center justify-center"><div className="animate-spin rounded-full h-7 w-7 border-b-2 border-[var(--color-primary-blue)]" /></div>}>
           <AnimatePresence mode="wait">
             {activeTab === 'dashboard' ? (
               <motion.div
@@ -369,6 +370,7 @@ export default function App() {
               </div>
             )}
           </AnimatePresence>
+          </Suspense>
         </div>
 
         {/* Mobile Fixed Bottom Navigation Bar */}
@@ -446,6 +448,7 @@ export default function App() {
         onAddLead={handleAddLead}
       />
 
+      <Suspense fallback={null}>
       <NewClinicModal
         isOpen={isNewClinicModalOpen}
         onClose={() => setIsNewClinicModalOpen(false)}
@@ -456,6 +459,7 @@ export default function App() {
         onClose={() => setIsHealthDrawerOpen(false)}
         clinicId={currentClinicId}
       />
+      </Suspense>
 
       <LogoutConfirmationModal
         isOpen={isLogoutModalOpen}

@@ -752,6 +752,7 @@ export interface PatientRow {
   status: 'active' | 'inactive';
   clinicId: string;
   fromClinicorp: boolean;
+  createdAt?: string;
 }
 
 async function fetchAllRows(build: (from: number, to: number) => any): Promise<any[]> {
@@ -800,7 +801,8 @@ export async function fetchPatientsFromDb(clinicId?: string): Promise<PatientRow
       nextAppointment: next.get(r.id),
       status: r.status === 'inactive' ? 'inactive' : 'active',
       clinicId: r.clinic_id,
-      fromClinicorp: Boolean(r.clinicorp_id)
+      fromClinicorp: Boolean(r.clinicorp_id),
+      createdAt: r.created_at
     }));
   } catch (e: any) {
     console.error('Erro ao carregar pacientes do Supabase:', e?.message);
@@ -939,6 +941,44 @@ export async function insertProfessionalInDb(p: { clinicId: string; name: string
   }]);
   if (error) console.error('Erro ao cadastrar profissional no Supabase:', error.message);
   return !error;
+}
+
+
+/** Grupo de status usado nas análises (aceita os status do banco e textos antigos guardados no navegador). */
+export function statusBucket(raw?: string | null): 'attended' | 'confirmed' | 'cancelled' | 'missed' | 'pending' {
+  const s = String(raw || '').toLowerCase();
+  if (/cancel/.test(s)) return 'cancelled';
+  if (/falt|missed|no.?show/.test(s)) return 'missed';
+  if (/attended|completed|realiz|conclu|compare|atendid/.test(s)) return 'attended';
+  if (/confirm|in_progress|andamento/.test(s)) return 'confirmed';
+  return 'pending';
+}
+
+/** Pacientes e agendamentos reais (banco/Clinicorp) para Relatórios e Análises. */
+export function useClinicDataset(clinicId?: string) {
+  const [patients, setPatients] = useState<any[]>([]);
+  const [appointments, setAppointments] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      if (isSupabaseConfigured()) {
+        const [pats, apts] = await Promise.all([fetchPatientsFromDb(clinicId), fetchAppointmentsFromDb(clinicId)]);
+        if (cancelled) return;
+        setPatients(pats || []);
+        setAppointments((apts || []).filter((a: any) => a.kind !== 'blocked'));
+      } else {
+        try { setPatients(JSON.parse(localStorage.getItem('crm_patients_data') || '[]')); } catch { setPatients([]); }
+        try { setAppointments(JSON.parse(localStorage.getItem('crm_appointments_data') || '[]')); } catch { setAppointments([]); }
+      }
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [clinicId]);
+
+  return { patients, appointments, loading };
 }
 
 // ---------------------------------------------------------------------

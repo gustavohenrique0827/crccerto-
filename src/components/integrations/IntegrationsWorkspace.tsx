@@ -45,6 +45,8 @@ import ClinicorpConfigPanel from './ClinicorpConfigPanel';
 import SupabaseConfigPanel from './SupabaseConfigPanel';
 
 import { crmApiClient, WebhookLog } from '../../lib/apiClient';
+import { getSupabase, isSupabaseConfigured } from '../../lib/supabase';
+import { runClinicorpSync } from '../../lib/clinicorpSync';
 
 export type IntegrationSegment = 'ceop' | 'odontologia' | 'all';
 
@@ -83,6 +85,37 @@ export default function IntegrationsWorkspace() {
 
   const [activeTab, setActiveTab] = useState<'integrations' | 'settings' | 'history' | 'mapping' | 'webhooks' | 'simples_dental' | 'clinicorp' | 'supabase'>('integrations');
   const [syncingId, setSyncingId] = useState<string | null>(null);
+
+  // Estado REAL do Clinicorp: o que já foi sincronizado e quando
+  const [clinicorpInfo, setClinicorpInfo] = useState<{ lastSync: string | null; appointments: number; patients: number } | null>(null);
+  const loadClinicorpInfo = React.useCallback(async () => {
+    const sb = getSupabase();
+    if (!sb) return setClinicorpInfo(null);
+    const [last, apts, pats] = await Promise.all([
+      sb.from('appointments').select('updated_at').not('clinicorp_id', 'is', null).order('updated_at', { ascending: false }).limit(1),
+      sb.from('appointments').select('id', { count: 'exact', head: true }).not('clinicorp_id', 'is', null).neq('kind', 'blocked'),
+      sb.from('patients').select('id', { count: 'exact', head: true }).not('clinicorp_id', 'is', null)
+    ]);
+    // `kind` pode não existir ainda (migration pendente): refaz a contagem simples
+    const aptCount = apts.error
+      ? (await sb.from('appointments').select('id', { count: 'exact', head: true }).not('clinicorp_id', 'is', null)).count || 0
+      : apts.count || 0;
+    setClinicorpInfo({ lastSync: last.data?.[0]?.updated_at || null, appointments: aptCount, patients: pats.count || 0 });
+  }, []);
+  useEffect(() => { loadClinicorpInfo(); }, [loadClinicorpInfo]);
+
+  const integrationState = (id: string): { label: string; detail?: string; tone: 'ok' | 'warn' | 'off' } => {
+    if (id === 'clinicorp') {
+      if (!isSupabaseConfigured() || !clinicorpInfo?.lastSync) return { label: 'Nunca sincronizado', detail: 'Use Testar conexão e depois sincronize em Clinicorp (CEOP)', tone: 'warn' };
+      const when = new Date(clinicorpInfo.lastSync).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+      return { label: 'Conectado', detail: `Última sincronização ${when} · ${clinicorpInfo.appointments} agendamentos · ${clinicorpInfo.patients} pacientes`, tone: 'ok' };
+    }
+    if (id.includes('google')) {
+      const ok = Boolean(getGoogleUser() && isAccessTokenValid());
+      return ok ? { label: 'Conectado', tone: 'ok' } : { label: 'Não conectado', detail: 'Conecte pela Agenda', tone: 'off' };
+    }
+    return { label: 'Não conectada', detail: 'Ainda não configurada neste sistema', tone: 'off' };
+  };
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [googleUser, setGoogleUser] = useState(getGoogleUser());
   const [isTokenValid, setIsTokenValid] = useState(() => isAccessTokenValid());
@@ -451,12 +484,26 @@ export default function IntegrationsWorkspace() {
     return w.segment === selectedSegment || w.segment === 'both';
   });
 
-  const handleSync = (id: string) => {
+  const handleSync = async (id: string) => {
     setSyncingId(id);
-    setTimeout(() => {
+    try {
+      if (id === 'clinicorp') {
+        // Teste real: lê o Clinicorp sem gravar nada
+        const r = await runClinicorpSync({ dryRun: true });
+        addToast(
+          r.ok ? `Clinicorp respondeu: ${r.appointments} agendamentos, ${r.patients} pacientes e ${r.professionals} profissionais.` : (r.message || 'Não foi possível conectar ao Clinicorp.'),
+          r.ok ? 'success' : 'error'
+        );
+        loadClinicorpInfo();
+      } else if (id.includes('google')) {
+        const ok = Boolean(getGoogleUser() && isAccessTokenValid());
+        addToast(ok ? 'Google Agenda conectado e com acesso válido.' : 'Google Agenda não está conectado. Conecte pela tela de Agenda.', ok ? 'success' : 'info');
+      } else {
+        addToast('Esta integração ainda não está configurada neste sistema.', 'info');
+      }
+    } finally {
       setSyncingId(null);
-      addToast('Sincronização concluída com sucesso!', 'success');
-    }, 1200);
+    }
   };
 
   return (
@@ -674,11 +721,21 @@ export default function IntegrationsWorkspace() {
                 <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-slate-400 font-medium">Status:</span>
-                    <span className="font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                      Ativo
-                    </span>
+                    {(() => {
+                      const st = integrationState(item.id);
+                      const tone = st.tone === 'ok' ? 'text-emerald-600 dark:text-emerald-400' : st.tone === 'warn' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400';
+                      const dot = st.tone === 'ok' ? 'bg-emerald-500' : st.tone === 'warn' ? 'bg-amber-500' : 'bg-slate-300';
+                      return (
+                        <span className={cn('font-bold flex items-center gap-1', tone)}>
+                          <span className={cn('w-1.5 h-1.5 rounded-full', dot, st.tone === 'ok' && 'animate-pulse')} />
+                          {st.label}
+                        </span>
+                      );
+                    })()}
                   </div>
+                  {integrationState(item.id).detail && (
+                    <p className="text-[11px] text-slate-400 leading-snug -mt-1">{integrationState(item.id).detail}</p>
+                  )}
 
                   <button
                     onClick={() => handleSync(item.id)}
@@ -686,7 +743,7 @@ export default function IntegrationsWorkspace() {
                     className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <RefreshCw size={14} className={syncingId === item.id ? "animate-spin text-blue-600" : ""} />
-                    <span>{syncingId === item.id ? 'Sincronizando...' : 'Testar Conexão'}</span>
+                    <span>{syncingId === item.id ? 'Testando...' : 'Testar conexão'}</span>
                   </button>
                 </div>
               </div>

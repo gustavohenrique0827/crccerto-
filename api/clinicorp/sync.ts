@@ -46,6 +46,21 @@ export function statusFromTags(tags: any[]): 'pending' | 'confirmed' | 'attended
   return 'pending';
 }
 
+/**
+ * Status do agendamento no CRM, na ordem de confiança:
+ * 1) etiqueta de cancelamento; 2) status oficial do Clinicorp (Atendido, Faltou, Em espera...);
+ * 3) demais etiquetas (Confirmado, Reagendada/Remarcar).
+ */
+export function resolveStatus(a: any, statusById: Map<string, { type: string }>): 'pending' | 'confirmed' | 'attended' | 'missed' | 'cancelled' | 'rescheduled' {
+  const fromTags = statusFromTags(a.tags);
+  if (fromTags === 'cancelled') return 'cancelled';
+  const type = statusById.get(String(a.StatusId))?.type;
+  if (type === 'CHECKOUT') return 'attended';
+  if (type === 'MISSED') return 'missed';
+  if (type === 'IN_SESSION' || type === 'ARRIVED' || type === 'CONFIRMED') return 'confirmed';
+  return fromTags;
+}
+
 const atomicToDate = (n: number | string) => {
   const s = String(n);
   return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
@@ -98,10 +113,17 @@ export default async function handler(req: Req, res: Res) {
   const range = { from: ymd(addDays(-daysBack)), to: ymd(addDays(daysForward)) };
 
   try {
-    const [pros, apts] = await Promise.all([
+    const [pros, apts, statusRes, catsRes] = await Promise.all([
       clinicorpGet('professional/list_all_professionals'),
-      clinicorpGet('appointment/list', range)
+      clinicorpGet('appointment/list', range),
+      clinicorpGet('appointment/status_list').catch(() => ({ list: [] })),
+      clinicorpGet('appointment/list_categories').catch(() => [])
     ]);
+    // Status oficiais do Clinicorp (Confirmado, Em espera, Atendido, Faltou...) e cores das categorias
+    const statusById = new Map<string, { type: string; label: string; color: string }>(
+      ((statusRes as any)?.list || []).map((x: any) => [String(x.id), { type: x.Type, label: String(x.Description || '').replace(/^\d+-/, ''), color: x.Color }])
+    );
+    const catColor = new Map<string, string>((catsRes as any[]).map(c => [String(c.id), c.Color]));
 
     // "Agenda Fechada" e similares são horários bloqueados: ficam no banco como kind='blocked' (não são pacientes)
     const isPlaceholder = (name: string) => /^\s*(agenda\s+fechada|agendar\s+abert)/i.test(name || '');
@@ -151,14 +173,14 @@ export default async function handler(req: Req, res: Res) {
       start_time: a.fromTime,
       end_time: a.toTime,
       duration_minutes: minutesBetween(a.fromTime, a.toTime),
-      status: kind === 'blocked' ? 'pending' : (a.Deleted ? 'cancelled' : statusFromTags(a.tags)),
+      status: kind === 'blocked' ? 'pending' : (a.Deleted ? 'cancelled' : resolveStatus(a, statusById)),
       notes: a.Notes || null,
       booked_at: a.CreateDate || null,
       booked_by: (a.CreateUserName || '').trim() || null,
       source: 'clinicorp',
       kind,
       category: (a.CategoryDescription || '').trim() || null,
-      category_color: a.CategoryColor || null,
+      category_color: a.CategoryColor || catColor.get(String(a.CategoryId)) || null,
       tags: (a.tags || []).map((t: any) => ({ name: String(t.Name || '').trim(), color: t.Color || null, type: t.Type || null })),
       clinicorp_raw: {
         procedures: a.SelectedProceduresList || null, alert: a.AlertInfo || null, email: a.Email || null,
@@ -167,6 +189,7 @@ export default async function handler(req: Req, res: Res) {
         firstAppointment: a.FirstAppointment || null, howDidMeet: a.HowDidMeet || null,
         checkin: a.CheckinTime || null, waitStart: a.WaitStart || null, waitEnds: a.WaitEnds || null,
         statusId: a.StatusId || null, statusColor: a.StatusColor || null,
+        statusType: statusById.get(String(a.StatusId))?.type || null, statusLabel: statusById.get(String(a.StatusId))?.label || null,
         modifiedDate: a.ModifiedDate || null, editedBy: a.EditedBy || null, isNew: a.isNew || null
       }
     });

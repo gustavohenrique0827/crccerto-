@@ -32,20 +32,13 @@ import {
 import { motion } from 'motion/react';
 import { cn } from '@/src/lib/utils';
 import { useApp } from '@/src/context/AppContext';
+import { useClinicDataset, statusBucket } from '@/src/lib/supabase';
 import { exportToCSV } from '@/src/lib/exportUtils';
 
 export default function DataAnalysisWorkspace() {
-  const { leads, addToast } = useApp();
+  const { leads, addToast, currentClinicId } = useApp();
+  const { appointments: appointmentsList } = useClinicDataset(currentClinicId);
   const [dateRange, setDateRange] = useState('30d');
-
-  // Real appointments from local storage
-  const appointmentsList = useMemo(() => {
-    try {
-      const raw = localStorage.getItem('crm_appointments_data');
-      if (raw) return JSON.parse(raw);
-    } catch {}
-    return [];
-  }, []);
 
   // Real marketing campaigns from local storage
   const campaignsList = useMemo(() => {
@@ -58,8 +51,8 @@ export default function DataAnalysisWorkspace() {
 
   const totalLeads = leads?.length || 0;
   const totalAppointments = appointmentsList.length;
-  const totalAttended = appointmentsList.filter((a: any) => String(a.status).toLowerCase().includes('realiz')).length;
-  const totalNoShow = appointmentsList.filter((a: any) => String(a.status).toLowerCase().includes('falt') || String(a.status).toLowerCase().includes('cancel')).length;
+  const totalAttended = appointmentsList.filter((a: any) => statusBucket(a.status) === 'attended').length;
+  const totalNoShow = appointmentsList.filter((a: any) => ['missed', 'cancelled'].includes(statusBucket(a.status))).length;
   const totalSold = leads?.filter(l => l.status === 'vendido' || (l.status as any) === 'sold').length || 0;
 
   // Meta campaigns

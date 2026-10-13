@@ -20,6 +20,7 @@ import { cn } from '@/src/lib/utils';
 import { useApp } from '@/src/context/AppContext';
 import { exportToCSV } from '@/src/lib/exportUtils';
 import { Card } from '@/src/components/ui/Card';
+import ClinicorpSuggestions from './ClinicorpSuggestions';
 
 import { INITIAL_FOLLOWUPS } from '@/src/lib/mockData';
 
@@ -259,6 +260,8 @@ export default function FollowUpWorkspace() {
           Exibindo <span className="font-bold text-[var(--color-text-primary)]">{filteredFollowUps.length}</span> follow-up(s)
         </div>
       </Card>
+
+      <ClinicorpSuggestions />
 
       {/* Pipeline View */}
       {filteredFollowUps.length === 0 ? (
