@@ -118,58 +118,59 @@ function GridAptCard({ apt, height, widthPct, colPx, realEnd, hasConflict, confl
   const px = (colPx * widthPct) / 100;
   const compact = px < 150;
   const narrow = px < 80;
-  const dur = Math.max(Number(apt.duration) || 30, 5);
   const first = String(apt.patient || '').split(' ')[0];
-  const syncBadge = apt.googleSyncStatus === 'synced';
+  const accent = hasConflict ? '#f43f5e' : (apt.categoryColor || pc.border);
+  const range = `${apt.time} - ${minutesToTime(realEnd)}`;
+  const subtitle = apt.category || apt.procedure;
 
   return (
     <div
       onClick={(e) => { e.stopPropagation(); onOpen(); }}
-      title={`${apt.time} – ${minutesToTime(realEnd)} · ${apt.patient} · ${apt.procedure}${apt.professional ? ` · ${apt.professional}` : ''}${(apt.tags || []).length ? ` · ${(apt.tags || []).map(t => t.name).join(', ')}` : ''}`}
+      title={`${range} · ${apt.patient} · ${apt.procedure}${apt.professional ? ` · ${apt.professional}` : ''}${(apt.tags || []).length ? ` · ${(apt.tags || []).map(t => t.name).join(', ')}` : ''}`}
       className={cn(
-        'appointment-card absolute overflow-hidden cursor-pointer border bg-white/90 dark:bg-slate-800/90 shadow-sm hover:shadow-lg hover:z-20 transition-shadow',
-        height < 56 ? 'rounded-lg px-2 py-1' : 'rounded-xl px-3 py-2',
-        hasConflict ? 'border-rose-400 ring-1 ring-rose-400/60' : 'border-slate-200 dark:border-slate-700',
+        'appointment-card absolute overflow-hidden cursor-pointer shadow-sm hover:shadow-lg hover:z-20 transition-shadow text-slate-900 dark:text-slate-50',
+        height < 52 ? 'rounded-lg px-2 py-1' : 'rounded-xl px-3 py-2',
         apt.status === 'cancelled' && 'opacity-50'
       )}
-      style={{ ...style, borderLeft: `4px solid ${hasConflict ? 'rgb(244 63 94)' : pc.border}`, backgroundImage: `linear-gradient(${pc.bg}, ${pc.bg})`, opacity: dimmed ? 0.55 : undefined }}
+      style={{
+        ...style,
+        borderLeft: `5px solid ${accent}`,
+        background: `color-mix(in srgb, ${accent} ${hasConflict ? 30 : 22}%, var(--color-surface-elevated))`,
+        opacity: dimmed ? 0.55 : undefined
+      }}
     >
-      {height < 56 ? (
+      {height < 52 ? (
         <div className="flex items-center gap-1.5 leading-none h-full">
-          {!narrow && <span className="font-mono text-[10px] font-black text-slate-600 dark:text-slate-300 shrink-0">{apt.time}</span>}
-          <span className={cn('text-[11px] font-bold text-slate-900 dark:text-white truncate', apt.status === 'cancelled' && 'line-through')}>{compact ? first : apt.patient}</span>
-          {hasConflict ? <AlertTriangle size={11} className="text-rose-500 shrink-0 ml-auto" /> : <span className={cn('w-2 h-2 rounded-full shrink-0 ml-auto', conf.color)} title={conf.label} />}
+          {!narrow && <span className="font-mono text-[10.5px] font-semibold opacity-80 shrink-0">{apt.time} - {minutesToTime(realEnd)}</span>}
+          <span className={cn('text-[11.5px] font-bold truncate', apt.status === 'cancelled' && 'line-through')}>{compact ? first : apt.patient}</span>
+          {hasConflict ? <AlertTriangle size={12} className="text-rose-500 shrink-0 ml-auto" /> : <span className={cn('w-2 h-2 rounded-full shrink-0 ml-auto', conf.color)} title={conf.label} />}
         </div>
       ) : (
         <div className="flex flex-col h-full min-h-0">
           <div className="flex items-center justify-between gap-1.5">
-            <span className="flex items-center gap-1 font-mono text-[11px] font-black text-slate-700 dark:text-slate-200 truncate">
-              {!compact && <Clock size={11} className="text-sky-500 shrink-0" />}
-              {compact ? apt.time : `${apt.time} (${dur} min)`}
+            <span className="font-mono text-[11px] font-semibold opacity-85 truncate">{compact ? apt.time : range}</span>
+            <span className="flex items-center gap-1.5 shrink-0">
+              {hasConflict && <AlertTriangle size={14} className="text-rose-500" />}
+              {compact || narrow || px < 215 ? (
+                !hasConflict && <span className={cn('w-2.5 h-2.5 rounded-full', conf.color)} title={conf.label} />
+              ) : (
+                apt.status === 'pending'
+                  ? <span className="text-[9.5px] font-bold px-2 py-0.5 rounded-md text-white bg-amber-500">{conf.label}</span>
+                  : <span className={cn('text-[9.5px] font-bold px-2 py-0.5 rounded-md text-white', conf.color)}>{conf.label}</span>
+              )}
             </span>
-            {compact ? (
-              <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', conf.color)} title={conf.label} />
-            ) : (
-              <span className="flex items-center gap-1 shrink-0">
-                {syncBadge && <span className="text-[9px] font-bold text-emerald-600 border border-emerald-500/40 bg-emerald-500/10 rounded px-1">Sinc.</span>}
-                <span className={cn('text-[9px] font-bold px-1.5 py-0.5 rounded-full text-white', conf.color)}>{conf.label}</span>
-              </span>
-            )}
           </div>
-          <h4 className={cn('mt-1 font-extrabold text-slate-900 dark:text-white leading-tight', compact ? 'text-xs truncate' : 'text-[13px] line-clamp-2', apt.status === 'cancelled' && 'line-through')}>
+          <h4 className={cn('mt-1 font-extrabold leading-tight', compact || height < 100 ? 'text-[13px] truncate' : 'text-[13.5px] line-clamp-2', apt.status === 'cancelled' && 'line-through')}>
             {compact ? first : apt.patient}
           </h4>
-          {height >= 70 && <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate leading-tight mt-0.5">{apt.category && apt.category !== apt.procedure ? `${apt.category} · ` : ''}{apt.procedure}</p>}
+          {height >= 64 && <p className="text-[11.5px] opacity-75 truncate leading-tight mt-0.5">{subtitle}</p>}
           {hasConflict && height >= 100 && !compact && (
-            <p className="mt-1 flex items-start gap-1 text-[10.5px] font-semibold text-rose-500 leading-snug"><AlertTriangle size={11} className="shrink-0 mt-px" /><span className="line-clamp-2">Conflito com: {conflictNames}</span></p>
+            <p className="mt-1 text-[10.5px] font-semibold text-rose-500 dark:text-rose-300 leading-snug line-clamp-2">Conflito com: {conflictNames}</p>
           )}
           {height >= 96 && (apt.tags || []).length > 0 && !compact && <div className="mt-1"><TagChips tags={apt.tags} max={2} size="xs" /></div>}
           {showPro && apt.professional && height >= 90 && !compact && (
-            <div className="mt-auto pt-1 border-t border-slate-200/70 dark:border-slate-700/70 flex items-center gap-1.5 text-[10.5px] text-slate-500 dark:text-slate-400 truncate">
-              <Stethoscope size={11} className="shrink-0" /><span className="truncate">{apt.professional}</span>
-            </div>
+            <div className="mt-auto pt-1 text-[10.5px] opacity-70 truncate">{apt.professional}</div>
           )}
-          {hasConflict && height < 96 && <AlertTriangle size={12} className="absolute right-2 bottom-1.5 text-rose-500" />}
         </div>
       )}
     </div>
@@ -1363,24 +1364,32 @@ export default function AppointmentsCalendar() {
                Profissional
             </h3>
             <div className="space-y-1.5">
-              {professionals.map(prof => (
-                <button
-                  key={prof}
-                  onClick={() => setSelectedProfessional(prof)}
-                  className={cn(
-                    "w-full text-left px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-between",
-                    selectedProfessional === prof 
-                      ? "bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400" 
-                      : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                  )}
-                >
-                  <span className="truncate flex items-center gap-2">
-                    {prof !== 'Todos' && <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: profColors(prof).border }} />}
-                    {prof}
-                  </span>
-                  {selectedProfessional === prof && <div className="w-1.5 h-1.5 rounded-full bg-blue-600" />}
-                </button>
-              ))}
+              {professionals.map(prof => {
+                const n = prof === 'Todos'
+                  ? clinicAppointments.filter(a => a.status !== 'cancelled' && (viewMode === 'day' ? a.date === formatDateStr(selectedDate) : weekDays.some(d => formatDateStr(d) === a.date))).length
+                  : clinicAppointments.filter(a => a.professional === prof && a.status !== 'cancelled' && (viewMode === 'day' ? a.date === formatDateStr(selectedDate) : weekDays.some(d => formatDateStr(d) === a.date))).length;
+                const active = selectedProfessional === prof;
+                return (
+                  <button
+                    key={prof}
+                    onClick={() => setSelectedProfessional(prof)}
+                    className={cn(
+                      "w-full text-left px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-2",
+                      active ? "bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400" : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                    )}
+                  >
+                    <span className="truncate flex items-center gap-2 min-w-0">
+                      {prof !== 'Todos' && <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: profColors(prof).border }} />}
+                      <span className="truncate">{prof === 'Todos' ? 'Todos os profissionais' : prof}</span>
+                      {isMain(prof) && <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--color-primary-blue)]/15 text-[var(--color-primary-blue)] shrink-0">Principal</span>}
+                    </span>
+                    <span className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-[10px] font-bold opacity-60">{n}</span>
+                      {active && <Check size={14} />}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -1474,41 +1483,6 @@ export default function AppointmentsCalendar() {
           // os dias fica sempre visível e cada card continua ligado à sua coluna.
           style={viewMode === 'week' || viewMode === 'day' || viewMode === 'list' ? { height: 'calc(100vh - 262px)', minHeight: 560 } : undefined}
         >
-          {/* Abas de profissionais: a agenda de cada um em tamanho legível */}
-          {(viewMode === 'week' || viewMode === 'day' || viewMode === 'list') && (() => {
-            const rangeDates = (viewMode === 'week' || viewMode === 'list') ? weekDays.map(d => formatDateStr(d)) : [formatDateStr(selectedDate)];
-            const inRange = clinicAppointments.filter(a => rangeDates.includes(a.date) && a.status !== 'cancelled');
-            const pros = professionals.filter(pn => pn !== 'Todos');
-            if (pros.length < 2) return null;
-            return (
-              <div className="shrink-0 flex items-center gap-2 overflow-x-auto custom-scrollbar px-3 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/60">
-                {['Todos', ...pros].map(pn => {
-                  const count = pn === 'Todos' ? inRange.length : inRange.filter(a => a.professional === pn).length;
-                  const active = selectedProfessional === pn;
-                  const col = pn === 'Todos' ? null : profColors(pn);
-                  return (
-                    <button
-                      key={pn}
-                      onClick={() => setSelectedProfessional(pn)}
-                      className={cn(
-                        "shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-bold transition-all cursor-pointer",
-                        active
-                          ? "text-slate-900 dark:text-white shadow-xs"
-                          : "border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800"
-                      )}
-                      style={active ? { background: col ? col.bg : 'rgba(15,107,120,0.14)', borderColor: col ? col.border : 'rgb(15 107 120)' } : undefined}
-                    >
-                      {col && <span className="w-2.5 h-2.5 rounded-full" style={{ background: col.border }} />}
-                      <span className="max-w-[160px] truncate">{pn === 'Todos' ? 'Todos os profissionais' : pn.split(' ').slice(0, 2).join(' ')}</span>
-                      {isMain(pn) && <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--color-primary-blue)]/15 text-[var(--color-primary-blue)]">Principal</span>}
-                      <span className="text-[10px] font-black opacity-60">{count}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            );
-          })()}
-
           {/* 1. WEEK VIEW (Clinicorp standard 7-day columns) */}
           {viewMode === 'week' && (
             <div className="flex-1 flex flex-col overflow-hidden">
@@ -1533,7 +1507,7 @@ export default function AppointmentsCalendar() {
                       }}
                       className={cn(
                         "p-2.5 text-center border-r border-slate-200 dark:border-slate-800 last:border-r-0 cursor-pointer hover:bg-blue-50/40 dark:hover:bg-blue-900/10 transition-colors",
-                        isToday ? "bg-blue-50/70 dark:bg-blue-950/40 font-bold" : ""
+                        isToday ? "bg-[var(--color-primary-blue)]/12 font-bold" : ""
                       )}
                     >
                       <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -1600,7 +1574,7 @@ export default function AppointmentsCalendar() {
                             }}
                             className={cn(
                               "relative border-r border-slate-100 dark:border-slate-800/60 last:border-r-0 cursor-pointer hover:bg-blue-50/20 dark:hover:bg-blue-900/5 transition-colors",
-                              isToday && "bg-blue-50/30 dark:bg-blue-950/20"
+                              isToday && "bg-[var(--color-primary-blue)]/8"
                             )}
                           >
                             {hours.map(h => (
