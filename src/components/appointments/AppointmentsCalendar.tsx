@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -105,7 +105,77 @@ function TagChips({ tags, max = 3, size = 'sm' }: { tags?: { name: string; color
   );
 }
 
-const HOUR_PX = 72; // altura de 1 hora na visão semanal
+/** Card de um compromisso dentro da grade: o mesmo desenho dos cards da lista, adaptado à altura disponível. */
+function GridAptCard({ apt, height, widthPct, colPx, realEnd, hasConflict, conflictNames, pc, dimmed, onOpen, style, showPro }: {
+  key?: React.Key; colPx: number; apt: Appointment; height: number; widthPct: number; realEnd: number; hasConflict?: boolean; conflictNames?: string;
+  pc: { border: string; bg: string }; dimmed?: boolean; onOpen: () => void; style: React.CSSProperties; showPro: boolean;
+}) {
+  const conf = STATUS_CONFIG[apt.status] || STATUS_CONFIG.pending;
+  // Largura real estimada do card em pixels (coluna × fração ocupada): decide quanto detalhe cabe
+  const px = (colPx * widthPct) / 100;
+  const compact = px < 150;
+  const narrow = px < 80;
+  const dur = Math.max(Number(apt.duration) || 30, 5);
+  const first = String(apt.patient || '').split(' ')[0];
+  const syncBadge = apt.googleSyncStatus === 'synced';
+
+  return (
+    <div
+      onClick={(e) => { e.stopPropagation(); onOpen(); }}
+      title={`${apt.time} – ${minutesToTime(realEnd)} · ${apt.patient} · ${apt.procedure}${apt.professional ? ` · ${apt.professional}` : ''}${(apt.tags || []).length ? ` · ${(apt.tags || []).map(t => t.name).join(', ')}` : ''}`}
+      className={cn(
+        'appointment-card absolute overflow-hidden cursor-pointer border bg-white/90 dark:bg-slate-800/90 shadow-sm hover:shadow-lg hover:z-20 transition-shadow',
+        height < 56 ? 'rounded-lg px-2 py-1' : 'rounded-xl px-3 py-2',
+        hasConflict ? 'border-rose-400 ring-1 ring-rose-400/60' : 'border-slate-200 dark:border-slate-700',
+        apt.status === 'cancelled' && 'opacity-50'
+      )}
+      style={{ ...style, borderLeft: `4px solid ${hasConflict ? 'rgb(244 63 94)' : pc.border}`, backgroundImage: `linear-gradient(${pc.bg}, ${pc.bg})`, opacity: dimmed ? 0.55 : undefined }}
+    >
+      {height < 56 ? (
+        <div className="flex items-center gap-1.5 leading-none h-full">
+          {!narrow && <span className="font-mono text-[10px] font-black text-slate-600 dark:text-slate-300 shrink-0">{apt.time}</span>}
+          <span className={cn('text-[11px] font-bold text-slate-900 dark:text-white truncate', apt.status === 'cancelled' && 'line-through')}>{compact ? first : apt.patient}</span>
+          {hasConflict ? <AlertTriangle size={11} className="text-rose-500 shrink-0 ml-auto" /> : <span className={cn('w-2 h-2 rounded-full shrink-0 ml-auto', conf.color)} title={conf.label} />}
+        </div>
+      ) : (
+        <div className="flex flex-col h-full min-h-0">
+          <div className="flex items-center justify-between gap-1.5">
+            <span className="flex items-center gap-1 font-mono text-[11px] font-black text-slate-700 dark:text-slate-200 truncate">
+              {!compact && <Clock size={11} className="text-sky-500 shrink-0" />}
+              {compact ? apt.time : `${apt.time} (${dur} min)`}
+            </span>
+            {compact ? (
+              <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', conf.color)} title={conf.label} />
+            ) : (
+              <span className="flex items-center gap-1 shrink-0">
+                {syncBadge && <span className="text-[9px] font-bold text-emerald-600 border border-emerald-500/40 bg-emerald-500/10 rounded px-1">Sinc.</span>}
+                <span className={cn('text-[9px] font-bold px-1.5 py-0.5 rounded-full text-white', conf.color)}>{conf.label}</span>
+              </span>
+            )}
+          </div>
+          <h4 className={cn('mt-1 font-extrabold text-slate-900 dark:text-white leading-tight', compact ? 'text-xs truncate' : 'text-[13px] line-clamp-2', apt.status === 'cancelled' && 'line-through')}>
+            {compact ? first : apt.patient}
+          </h4>
+          {height >= 70 && <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate leading-tight mt-0.5">{apt.category && apt.category !== apt.procedure ? `${apt.category} · ` : ''}{apt.procedure}</p>}
+          {hasConflict && height >= 100 && !compact && (
+            <p className="mt-1 flex items-start gap-1 text-[10.5px] font-semibold text-rose-500 leading-snug"><AlertTriangle size={11} className="shrink-0 mt-px" /><span className="line-clamp-2">Conflito com: {conflictNames}</span></p>
+          )}
+          {height >= 96 && (apt.tags || []).length > 0 && !compact && <div className="mt-1"><TagChips tags={apt.tags} max={2} size="xs" /></div>}
+          {showPro && apt.professional && height >= 90 && !compact && (
+            <div className="mt-auto pt-1 border-t border-slate-200/70 dark:border-slate-700/70 flex items-center gap-1.5 text-[10.5px] text-slate-500 dark:text-slate-400 truncate">
+              <Stethoscope size={11} className="shrink-0" /><span className="truncate">{apt.professional}</span>
+            </div>
+          )}
+          {hasConflict && height < 96 && <AlertTriangle size={12} className="absolute right-2 bottom-1.5 text-rose-500" />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const HOUR_PX_DEFAULT = 72; // altura de 1 hora na visão semanal com todos os profissionais
+const HOUR_PX_FOCUS = 150; // altura de 1 hora quando um único profissional está selecionado
+const HOUR_PX = HOUR_PX_DEFAULT;
 const MIN_CARD_PX = 22; // altura mínima legível de um card
 const MIN_LAYOUT_MIN = Math.ceil((MIN_CARD_PX / HOUR_PX) * 60); // minutos que um card curto ocupa de fato
 
@@ -949,6 +1019,9 @@ export default function AppointmentsCalendar() {
     return days;
   }, [selectedDate]);
 
+  // Com um profissional selecionado (ou na visão de dia) cada hora ganha mais altura: os cards ficam legíveis
+  const HOUR_PX = viewMode === 'week' && selectedProfessional === 'Todos' ? HOUR_PX_DEFAULT : HOUR_PX_FOCUS;
+
   // Conflitos só do período que está na tela (e sem contar cancelados)
   const [rangeStart, rangeEnd] =
     viewMode === 'day' ? [formatDateStr(selectedDate), formatDateStr(selectedDate)]
@@ -1643,65 +1716,27 @@ export default function AppointmentsCalendar() {
                               const pc = profColors(apt.professional);
 
                               return (
-                                <div
+                                <GridAptCard
                                   key={apt.id}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSelectedAppointmentDetail(apt);
-                                  }}
-                                  title={`${apt.time} – ${minutesToTime(realEnd)} · ${apt.patient} · ${apt.procedure}${apt.professional ? ` · ${apt.professional}` : ''}${(apt.tags || []).length ? ` · ${(apt.tags || []).map(t => t.name).join(', ')}` : ''}`}
-                                  className={cn(
-                                    "appointment-card absolute rounded-lg border-l-4 shadow-2xs overflow-hidden px-1.5 py-1 cursor-pointer hover:shadow-md hover:z-10 transition-shadow",
-                                    hasConflict && "ring-1 ring-rose-500",
-                                    apt.status === 'cancelled' && "opacity-50 line-through"
-                                  )}
+                                  apt={apt}
+                                  height={height}
+                                  widthPct={widthPct}
+                                  colPx={190}
+                                  realEnd={realEnd}
+                                  hasConflict={hasConflict}
+                                  conflictNames={(conflictInfo?.conflictingWith || []).map(x => x.patient).join(', ')}
+                                  pc={pc}
+                                  dimmed={selectedProfessional === 'Todos' && !isMain(apt.professional)}
+                                  showPro={selectedProfessional === 'Todos'}
+                                  onOpen={() => setSelectedAppointmentDetail(apt)}
                                   style={{
-                                    background: pc.bg,
-                                    borderLeftColor: hasConflict ? 'rgb(244 63 94)' : pc.border,
                                     top: ((start - gridStart * 60) / 60) * HOUR_PX + 1,
                                     height,
-                                    opacity: selectedProfessional === 'Todos' && !isMain(apt.professional) ? 0.55 : 1,
                                     zIndex: isMain(apt.professional) ? 2 : 1,
                                     left: `calc(${leftPct}% + 1px)`,
                                     width: `calc(${widthPct}% - 2px)`
                                   }}
-                                >
-                                  {height < 36 ? (
-                                    /* Card baixo (agendamento curto): horário e nome na mesma linha */
-                                    <div className="flex items-center gap-1 leading-none h-full">
-                                      {widthPct >= 34 && <span className="font-mono text-[9px] font-black text-slate-700 dark:text-slate-300 shrink-0">{apt.time}</span>}
-                                      <span className="text-[11px] font-bold text-slate-900 dark:text-white truncate">{compact ? String(apt.patient).split(' ')[0] : apt.patient}</span>
-                                      {hasConflict
-                                        ? <AlertTriangle size={10} className="text-rose-600 dark:text-rose-400 shrink-0 ml-auto" />
-                                        : <span className={cn("w-2 h-2 rounded-full shrink-0 ml-auto", conf.color)} title={conf.label} />}
-                                    </div>
-                                  ) : (
-                                    <>
-                                  <div className="flex items-center justify-between gap-1 leading-none">
-                                        {!tiny && (
-                                          <span className="font-mono text-[9px] font-black text-slate-700 dark:text-slate-300 truncate">
-                                            {compact ? apt.time : `${apt.time}–${minutesToTime(realEnd)}`}
-                                          </span>
-                                        )}
-                                        {hasConflict ? (
-                                          <AlertTriangle size={10} className="text-rose-600 dark:text-rose-400 shrink-0" />
-                                        ) : (
-                                          <span className={cn("w-2 h-2 rounded-full shrink-0", conf.color)} title={conf.label} />
-                                        )}
-                                      </div>
-                                      <h4 className="text-[11px] font-bold text-slate-900 dark:text-white mt-0.5 truncate leading-tight">{compact ? String(apt.patient).split(' ')[0] : apt.patient}</h4>
-                                      {height >= 56 && <p className="text-[9.5px] text-slate-500 dark:text-slate-400 truncate leading-tight">{apt.procedure}</p>}
-                                  {height >= 84 && widthPct >= 50 && <div className="mt-0.5"><TagChips tags={apt.tags} max={2} size="xs" /></div>}
-                                      {height >= 76 && apt.professional && (
-                                        <div className="flex items-center gap-1 text-[8.5px] text-slate-400 mt-0.5 truncate">
-                                          <Stethoscope size={9} className="shrink-0" />
-                                          <span className="truncate">{apt.professional}</span>
-                                        </div>
-                                      )}
-    
-                                    </>
-                                  )}
-                                </div>
+                                />
                               );
                             })}
                           </div>
@@ -1928,35 +1963,25 @@ export default function AppointmentsCalendar() {
                             const pc = profColors(apt.professional);
                             const height = Math.max(((end - start) / 60) * HOUR_PX - 2, MIN_CARD_PX);
                             return (
-                              <div
+                              <GridAptCard
                                 key={apt.id}
-                                onClick={(e) => { e.stopPropagation(); setSelectedAppointmentDetail(apt); }}
-                                title={`${apt.time} – ${minutesToTime(realEnd)} · ${apt.patient} · ${apt.procedure}`}
-                                className={cn(
-                                  "appointment-card absolute rounded-lg border-l-4 shadow-2xs overflow-hidden px-2 py-1 cursor-pointer hover:shadow-md hover:z-10 transition-shadow",
-                                  hasConflict && "ring-1 ring-rose-500",
-                                  apt.status === 'cancelled' && "opacity-50 line-through"
-                                )}
+                                apt={apt}
+                                height={height}
+                                widthPct={(100 / lanes) * span}
+                                colPx={Math.max(190, Math.round(1150 / Math.max(names.length, 1)))}
+                                realEnd={realEnd}
+                                hasConflict={hasConflict}
+                                conflictNames={(conflictMap.get(apt.id)?.conflictingWith || []).map(x => x.patient).join(', ')}
+                                pc={pc}
+                                showPro={false}
+                                onOpen={() => setSelectedAppointmentDetail(apt)}
                                 style={{
-                                  background: pc.bg,
-                                  borderLeftColor: hasConflict ? 'rgb(244 63 94)' : pc.border,
                                   top: ((start - gridStart * 60) / 60) * HOUR_PX + 1,
                                   height,
                                   left: `calc(${lane * (100 / lanes)}% + 2px)`,
                                   width: `calc(${(100 / lanes) * span}% - 4px)`
                                 }}
-                              >
-                                <div className="flex items-center justify-between gap-1 leading-none">
-                                  <span className="font-mono text-[10px] font-black text-slate-700 dark:text-slate-300 truncate">{apt.time}–{minutesToTime(realEnd)}</span>
-                                  {hasConflict
-                                    ? <AlertTriangle size={11} className="text-rose-600 dark:text-rose-400 shrink-0" />
-                                    : <span className={cn("w-2 h-2 rounded-full shrink-0", conf.color)} title={conf.label} />}
-                                </div>
-                                <h4 className="text-xs font-bold text-slate-900 dark:text-white mt-0.5 truncate leading-tight">{apt.patient}</h4>
-                                {height >= 52 && <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate leading-tight">{apt.procedure}</p>}
-                                {height >= 80 && <div className="mt-0.5"><TagChips tags={apt.tags} max={2} size="xs" /></div>}
-                                {height >= 72 && apt.phone && <p className="text-[10px] text-slate-400 truncate font-mono">{apt.phone}</p>}
-                              </div>
+                              />
                             );
                           })}
                         </div>
