@@ -60,6 +60,27 @@ const STAGES: { id: LeadStatus; label: string; color: string; bg: string }[] = [
   { id: LeadStatus.DISQUALIFIED, label: 'Desqualificado', color: 'bg-[var(--stage-void)]', bg: 'bg-[var(--color-surface-sunken)]' },
 ];
 
+const dayStr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const DATE_PRESETS = [
+  { id: 'all', label: 'Todo o período' },
+  { id: 'today', label: 'Hoje' },
+  { id: 'yesterday', label: 'Ontem' },
+  { id: '7d', label: '7 dias' },
+  { id: '30d', label: '30 dias' },
+  { id: 'month', label: 'Este mês' },
+  { id: 'custom', label: 'Personalizado' },
+];
+function presetRange(id: string): [string, string] {
+  const now = new Date();
+  const back = (n: number) => { const d = new Date(now); d.setDate(d.getDate() - n); return dayStr(d); };
+  if (id === 'today') return [dayStr(now), dayStr(now)];
+  if (id === 'yesterday') return [back(1), back(1)];
+  if (id === '7d') return [back(6), dayStr(now)];
+  if (id === '30d') return [back(29), dayStr(now)];
+  if (id === 'month') return [dayStr(new Date(now.getFullYear(), now.getMonth(), 1)), dayStr(now)];
+  return ['', ''];
+}
+
 const LEAD_SOURCES = [
   { id: 'all', label: 'Todas as Origens' },
   { id: 'fb', label: 'Meta Ads (Facebook/Instagram)' },
@@ -154,6 +175,14 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
   const [selectedStageFilter, setSelectedStageFilter] = useState<string>('all');
   const [selectedPriorityFilter, setSelectedPriorityFilter] = useState<string>('all');
   const [selectedSourceFilter, setSelectedSourceFilter] = useState<string>('all');
+  const [datePreset, setDatePreset] = useState<string>('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [dateField, setDateField] = useState<'createdAt' | 'lastInteractionAt'>('createdAt');
+  const [ownerFilter, setOwnerFilter] = useState('all');
+  const [valueMin, setValueMin] = useState('');
+  const [valueMax, setValueMax] = useState('');
+  const [tagFilter, setTagFilter] = useState('');
 
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
   const [isGlobalBatchMoveOpen, setIsGlobalBatchMoveOpen] = useState(false);
@@ -203,19 +232,42 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
     const matchesStage = selectedStageFilter === 'all' || lead.status === selectedStageFilter;
     const matchesPriority = selectedPriorityFilter === 'all' || lead.priority === selectedPriorityFilter;
     const matchesSource = selectedSourceFilter === 'all' || lead.sourceId === selectedSourceFilter;
-    
-    return matchesSearch && matchesClinic && matchesStage && matchesPriority && matchesSource;
+    const matchesOwner = ownerFilter === 'all' || (ownerFilter === '__none' ? !lead.responsibleName : lead.responsibleName === ownerFilter);
+
+    const day = String((lead as any)[dateField] || lead.createdAt || '').slice(0, 10);
+    const matchesDate = (!dateFrom || (day && day >= dateFrom)) && (!dateTo || (day && day <= dateTo));
+
+    const value = Number(lead.estimatedValue || 0);
+    const matchesValue = (!valueMin || value >= Number(valueMin)) && (!valueMax || value <= Number(valueMax));
+    const matchesTag = !tagFilter.trim() || (lead.tags || []).some(t => t.toLowerCase().includes(tagFilter.trim().toLowerCase()));
+
+    return matchesSearch && matchesClinic && matchesStage && matchesPriority && matchesSource && matchesOwner && matchesDate && matchesValue && matchesTag;
   });
+
+  // Opções reais, tiradas dos leads carregados
+  const sourceOptions = Array.from(new Set(leads.map(l => l.sourceId).filter(Boolean))).sort();
+  const ownerOptions = Array.from(new Set(leads.map(l => l.responsibleName).filter(Boolean))).sort() as string[];
 
   const activeFiltersCount = 
     (selectedStageFilter !== 'all' ? 1 : 0) +
     (selectedPriorityFilter !== 'all' ? 1 : 0) +
-    (selectedSourceFilter !== 'all' ? 1 : 0);
+    (selectedSourceFilter !== 'all' ? 1 : 0) +
+    (dateFrom || dateTo ? 1 : 0) +
+    (ownerFilter !== 'all' ? 1 : 0) +
+    (valueMin || valueMax ? 1 : 0) +
+    (tagFilter.trim() ? 1 : 0);
+
+  const applyDatePreset = (id: string) => {
+    setDatePreset(id);
+    if (id !== 'custom') { const [f, t] = presetRange(id); setDateFrom(f); setDateTo(t); }
+  };
 
   const handleClearFilters = () => {
     setSelectedStageFilter('all');
     setSelectedPriorityFilter('all');
     setSelectedSourceFilter('all');
+    setDatePreset('all'); setDateFrom(''); setDateTo('');
+    setOwnerFilter('all'); setValueMin(''); setValueMax(''); setTagFilter('');
     addToast('Filtros restaurados', 'info');
   };
 
@@ -447,7 +499,7 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
                     initial={{ opacity: 0, scale: 0.95, y: 5 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95, y: 5 }}
-                    className="absolute right-0 mt-2 w-72 bg-[var(--color-surface-elevated)] border border-[var(--color-border-default)] rounded-[var(--radius-panel)] shadow-[var(--shadow-panel)] z-50 p-4 space-y-4 text-xs"
+                    className="absolute right-0 mt-2 w-[22rem] max-w-[92vw] max-h-[75vh] overflow-y-auto custom-scrollbar bg-[var(--color-surface-elevated)] border border-[var(--color-border-default)] rounded-[var(--radius-panel)] shadow-[var(--shadow-panel)] z-50 p-4 space-y-4 text-xs"
                   >
                     <div className="flex items-center justify-between border-b border-[var(--color-border-default)] pb-2">
                       <div className="flex items-center gap-1.5 font-bold text-[var(--color-text-primary)]">
@@ -496,18 +548,68 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-                        Filtrar por Origem do Lead
-                      </label>
-                      <select
-                        value={selectedSourceFilter}
-                        onChange={(e) => setSelectedSourceFilter(e.target.value)}
-                        className="w-full px-2.5 py-1.5 bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] rounded-[var(--radius-control)] text-xs text-[var(--color-text-primary)] outline-none"
-                      >
-                        {LEAD_SOURCES.map(src => (
-                          <option key={src.id} value={src.id}>{src.label}</option>
-                        ))}
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Origem do lead</label>
+                      <select value={selectedSourceFilter} onChange={(e) => setSelectedSourceFilter(e.target.value)} className="w-full px-2.5 py-1.5 bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] rounded-[var(--radius-control)] text-xs text-[var(--color-text-primary)] outline-none">
+                        <option value="all">Todas as origens</option>
+                        {sourceOptions.map(src => <option key={src} value={src}>{src}</option>)}
                       </select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Responsável</label>
+                      <select value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value)} className="w-full px-2.5 py-1.5 bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] rounded-[var(--radius-control)] text-xs text-[var(--color-text-primary)] outline-none">
+                        <option value="all">Todos</option>
+                        <option value="__none">Sem responsável</option>
+                        {ownerOptions.map(o => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                    </div>
+
+                    <div className="space-y-2 pt-1 border-t border-[var(--color-border-default)]">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Período</label>
+                        <select value={dateField} onChange={(e) => setDateField(e.target.value as any)} className="bg-transparent text-[10px] font-bold text-[var(--color-primary-blue)] outline-none cursor-pointer">
+                          <option value="createdAt">pela data de entrada</option>
+                          <option value="lastInteractionAt">pela última interação</option>
+                        </select>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {DATE_PRESETS.map(pr => (
+                          <button
+                            key={pr.id}
+                            type="button"
+                            onClick={() => applyDatePreset(pr.id)}
+                            className={cn(
+                              "px-2.5 py-1 rounded-full border text-[11px] font-bold cursor-pointer transition-colors",
+                              datePreset === pr.id
+                                ? "bg-[var(--color-primary-blue)] border-[var(--color-primary-blue)] text-white"
+                                : "border-[var(--color-border-default)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-sunken)]"
+                            )}
+                          >{pr.label}</button>
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="space-y-1">
+                          <span className="text-[10px] text-[var(--color-text-faint)] font-semibold">De</span>
+                          <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => { setDateFrom(e.target.value); setDatePreset('custom'); }} className="w-full px-2.5 py-1.5 bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] rounded-[var(--radius-control)] text-xs text-[var(--color-text-primary)] outline-none" />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-[10px] text-[var(--color-text-faint)] font-semibold">Até</span>
+                          <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => { setDateTo(e.target.value); setDatePreset('custom'); }} className="w-full px-2.5 py-1.5 bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] rounded-[var(--radius-control)] text-xs text-[var(--color-text-primary)] outline-none" />
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 pt-1 border-t border-[var(--color-border-default)]">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Valor estimado (R$)</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input type="number" min="0" placeholder="Mínimo" value={valueMin} onChange={(e) => setValueMin(e.target.value)} className="w-full px-2.5 py-1.5 bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] rounded-[var(--radius-control)] text-xs text-[var(--color-text-primary)] outline-none" />
+                        <input type="number" min="0" placeholder="Máximo" value={valueMax} onChange={(e) => setValueMax(e.target.value)} className="w-full px-2.5 py-1.5 bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] rounded-[var(--radius-control)] text-xs text-[var(--color-text-primary)] outline-none" />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Tag</label>
+                      <input type="text" placeholder="Ex.: implante" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} className="w-full px-2.5 py-1.5 bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] rounded-[var(--radius-control)] text-xs text-[var(--color-text-primary)] outline-none" />
                     </div>
 
                     <div className="pt-2 border-t border-[var(--color-border-default)] flex items-center justify-between">
@@ -557,8 +659,32 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
           )}
           {selectedSourceFilter !== 'all' && (
             <Badge variant="info">
-              Origem: {LEAD_SOURCES.find(s => s.id === selectedSourceFilter)?.label}
+              Origem: {selectedSourceFilter}
               <X size={12} className="cursor-pointer hover:opacity-80" onClick={() => setSelectedSourceFilter('all')} />
+            </Badge>
+          )}
+          {(dateFrom || dateTo) && (
+            <Badge variant="info">
+              {dateField === 'createdAt' ? 'Entrada' : 'Interação'}: {dateFrom ? dateFrom.split('-').reverse().join('/') : '…'} a {dateTo ? dateTo.split('-').reverse().join('/') : '…'}
+              <X size={12} className="cursor-pointer hover:opacity-80" onClick={() => { setDatePreset('all'); setDateFrom(''); setDateTo(''); }} />
+            </Badge>
+          )}
+          {ownerFilter !== 'all' && (
+            <Badge variant="info">
+              Responsável: {ownerFilter === '__none' ? 'sem responsável' : ownerFilter}
+              <X size={12} className="cursor-pointer hover:opacity-80" onClick={() => setOwnerFilter('all')} />
+            </Badge>
+          )}
+          {(valueMin || valueMax) && (
+            <Badge variant="info">
+              Valor: {valueMin ? `R$ ${valueMin}` : '0'} a {valueMax ? `R$ ${valueMax}` : '∞'}
+              <X size={12} className="cursor-pointer hover:opacity-80" onClick={() => { setValueMin(''); setValueMax(''); }} />
+            </Badge>
+          )}
+          {tagFilter.trim() && (
+            <Badge variant="info">
+              Tag: {tagFilter.trim()}
+              <X size={12} className="cursor-pointer hover:opacity-80" onClick={() => setTagFilter('')} />
             </Badge>
           )}
           <button 
