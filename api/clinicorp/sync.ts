@@ -150,6 +150,8 @@ export default async function handler(req: Req, res: Res) {
       duration_minutes: minutesBetween(a.fromTime, a.toTime),
       status: a.Deleted ? 'cancelled' : statusFromTags(a.tags),
       notes: a.Notes || null,
+      booked_at: a.CreateDate || null,
+      booked_by: (a.CreateUserName || '').trim() || null,
       source: 'clinicorp'
     }));
     for (let i = 0; i < aptRows.length; i += 200) {

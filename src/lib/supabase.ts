@@ -2,6 +2,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Lead, LeadStatus, Clinic, ModuleType } from '../types';
 import { INITIAL_LEADS } from './mockData';
+import { matchesBookingRule } from './bookingRule';
 
 const readLocal = (key: string): string => {
   try {
@@ -937,13 +938,19 @@ export async function insertProfessionalInDb(p: { clinicId: string; name: string
 // Agendamentos / métricas
 // ---------------------------------------------------------------------
 
+let hasBookingCols = true; // vira false se a migration das colunas booked_at/booked_by ainda não foi rodada
+
 async function loadAppointments(clinicId?: string): Promise<any[]> {
   const sb = getSupabase();
   if (sb) {
+    if (hasBookingCols) {
+      const probe = await sb.from('appointments').select('booked_at').limit(1);
+      if (probe.error) hasBookingCols = false;
+    }
     // O Supabase devolve no máximo 1000 linhas por consulta: lê em páginas até acabar
     try {
       return await fetchAllRows((a, b) => {
-        let q = sb.from('appointments').select('id,status,appointment_date,clinic_id').order('id').range(a, b);
+        let q = sb.from('appointments').select(`id,status,appointment_date,clinic_id,professional_name${hasBookingCols ? ',booked_at,booked_by' : ''}`).order('id').range(a, b);
         if (clinicId && clinicId !== 'all') q = q.eq('clinic_id', clinicId);
         return q;
       });
@@ -1192,7 +1199,9 @@ export function useSupabaseDashboardStats(clinicId?: string, range?: string) {
         if (cancelled) return;
         setStats({
           leads: total,
-          appointments: apts.length,
+          appointments: hasBookingCols
+            ? aptsAll.filter(a => a.booked_at && inRange(a.booked_at) && matchesBookingRule(a)).length
+            : apts.length,
           confirmations,
           followups,
           todayPendingConfirmations: on(today, ['pending']),
