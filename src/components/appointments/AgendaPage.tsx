@@ -99,20 +99,20 @@ function AptCard({ apt, top, height, left, width, narrow, conflict, onOpen }: {
       style={{ top, height, left, width, background: bg, zIndex: 2 }}
     >
       {height < 40 ? (
-        <div className="flex items-center gap-1.5 h-full">
-          <span className="text-[13px] font-bold truncate">{apt.patient}</span>
-          <span className="text-[11px] font-medium opacity-75 shrink-0">{apt.time}</span>
-          <span className="ml-auto shrink-0"><StatusIcon apt={apt} conflict={conflict} /></span>
+        <div className="flex items-center gap-1.5 h-full pr-5">
+          <span className="text-[12.5px] font-bold leading-tight line-clamp-2 break-words">{apt.patient}</span>
+          {!narrow && <span className="text-[11px] font-medium opacity-75 shrink-0">{apt.time}</span>}
+          <span className="absolute right-1.5 top-1/2 -translate-y-1/2"><StatusIcon apt={apt} conflict={conflict} /></span>
         </div>
       ) : (
-        <div className="flex items-start gap-1.5 h-full">
+        <div className="flex items-start gap-1.5 h-full pr-5">
           {!narrow && <User size={15} className="shrink-0 mt-[19px] opacity-80" />}
           <div className="min-w-0 flex-1 flex flex-col">
             <span className="text-[11px] font-medium opacity-80 leading-tight truncate">{narrow ? apt.time : `${apt.time} – ${end}`}</span>
-            <span className={cn('text-[14px] font-extrabold leading-tight break-words', height >= 90 ? 'line-clamp-3' : height >= 64 ? 'line-clamp-2' : 'line-clamp-1', cancelled && 'line-through')}>{apt.patient}</span>
+            <span className={cn('font-extrabold leading-tight break-words', narrow ? 'text-[13px]' : 'text-[14px]', height >= 90 ? 'line-clamp-4' : height >= 64 ? 'line-clamp-3' : 'line-clamp-2', cancelled && 'line-through')}>{apt.patient}</span>
             {height >= 56 && sub && <span className="text-[11.5px] opacity-75 leading-tight truncate">{sub}</span>}
           </div>
-          <span className="shrink-0 mt-0.5"><StatusIcon apt={apt} conflict={conflict} /></span>
+          <span className="absolute right-1.5 top-1.5"><StatusIcon apt={apt} conflict={conflict} /></span>
         </div>
       )}
     </button>
@@ -355,10 +355,10 @@ export default function AgendaPage() {
                           key={apt.id}
                           apt={apt}
                           top={((start - first * 60) / 15) * ROW + 1}
-                          height={Math.max(((end - start) / 15) * ROW - 3, 28)}
+                          height={Math.max(((end - start) / 15) * ROW - 3, 34)}
                           left={`calc(${(lane * 100) / lanes}% + 4px)`}
                           width={`calc(${100 / lanes}% - 8px)`}
-                          narrow={lanes > 2}
+                          narrow={lanes > 1}
                           conflict={!!conflicts.get(apt.id)?.hasConflict}
                           onOpen={() => setDetail(apt)}
                         />
