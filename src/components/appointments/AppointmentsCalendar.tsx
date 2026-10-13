@@ -28,7 +28,8 @@ import {
   LogOut,
   MoreHorizontal,
   SlidersHorizontal,
-  ChevronDown
+  ChevronDown,
+  PanelLeft
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Role } from '../../types';
@@ -137,44 +138,46 @@ function GridAptCard({ apt, height, widthPct, colPx, realEnd, hasConflict, confl
       style={{
         ...style,
         borderLeft: `5px solid ${accent}`,
-        background: `color-mix(in srgb, ${accent} ${hasConflict ? 30 : 22}%, var(--color-surface-elevated))`,
+        background: `color-mix(in srgb, ${accent} ${hasConflict ? 30 : 26}%, var(--color-surface-elevated))`,
         opacity: dimmed ? 0.55 : undefined
       }}
     >
-      {height < 52 ? (
-        <div className="flex items-center gap-1.5 leading-none h-full">
-          {!narrow && <span className="font-mono text-[10.5px] font-semibold opacity-80 shrink-0">{apt.time} - {minutesToTime(realEnd)}</span>}
-          <span className={cn('text-[11.5px] font-bold truncate', apt.status === 'cancelled' && 'line-through')}>{compact ? first : apt.patient}</span>
-          {hasConflict ? <AlertTriangle size={12} className="text-rose-500 shrink-0 ml-auto" /> : <span className={cn('w-2 h-2 rounded-full shrink-0 ml-auto', conf.color)} title={conf.label} />}
-        </div>
-      ) : (
-        <div className="flex flex-col h-full min-h-0">
-          <div className="flex items-center justify-between gap-1.5">
-            <span className="font-mono text-[11px] font-semibold opacity-85 truncate">{compact ? apt.time : range}</span>
-            <span className="flex items-center gap-1.5 shrink-0">
-              {hasConflict && <AlertTriangle size={14} className="text-rose-500" />}
-              {compact || narrow || px < 215 ? (
-                !hasConflict && <span className={cn('w-2.5 h-2.5 rounded-full', conf.color)} title={conf.label} />
-              ) : (
-                apt.status === 'pending'
-                  ? <span className="text-[9.5px] font-bold px-2 py-0.5 rounded-md text-white bg-amber-500">{conf.label}</span>
-                  : <span className={cn('text-[9.5px] font-bold px-2 py-0.5 rounded-md text-white', conf.color)}>{conf.label}</span>
-              )}
-            </span>
+      {(() => {
+        const bucket = statusBucket(apt.status);
+        const done = bucket === 'attended' || bucket === 'confirmed';
+        const icon = hasConflict
+          ? <AlertTriangle size={14} className="text-rose-500" />
+          : done ? <Check size={14} className="text-emerald-700 dark:text-emerald-300" strokeWidth={3} />
+          : bucket === 'missed' ? <X size={14} className="text-rose-600" strokeWidth={3} />
+          : <span className={cn('w-2.5 h-2.5 rounded-full', conf.color)} title={conf.label} />;
+        const nameCls = cn('font-bold leading-tight', apt.status === 'cancelled' && 'line-through opacity-60');
+        if (height < 52) {
+          return (
+            <div className="flex items-center gap-1.5 leading-none h-full">
+              <span className={cn('text-[13px] truncate', nameCls)}>{compact ? first : apt.patient}</span>
+              {!narrow && <span className="text-[11.5px] font-medium opacity-75 shrink-0">{apt.time}-{minutesToTime(realEnd)}</span>}
+              <span className="ml-auto shrink-0">{icon}</span>
+            </div>
+          );
+        }
+        return (
+          <div className="flex flex-col h-full min-h-0">
+            <div className="flex items-start justify-between gap-1.5">
+              <h4 className={cn(compact || height < 90 ? 'text-[13.5px] line-clamp-1' : 'text-[14px] line-clamp-2', nameCls)}>{compact ? first : apt.patient}</h4>
+              <span className="shrink-0 mt-0.5">{icon}</span>
+            </div>
+            <span className="text-[12px] font-medium opacity-80 leading-tight mt-0.5">{compact ? apt.time : range}</span>
+            {height >= 70 && subtitle && <p className="text-[11.5px] opacity-70 truncate leading-tight mt-0.5">{subtitle}</p>}
+            {hasConflict && height >= 100 && !compact && (
+              <p className="mt-1 text-[10.5px] font-semibold text-rose-500 dark:text-rose-300 leading-snug line-clamp-2">Conflito com: {conflictNames}</p>
+            )}
+            {height >= 96 && (apt.tags || []).length > 0 && !compact && <div className="mt-1"><TagChips tags={apt.tags} max={2} size="xs" /></div>}
+            {showPro && apt.professional && height >= 90 && !compact && (
+              <div className="mt-auto pt-1 text-[10.5px] opacity-70 truncate">{apt.professional}</div>
+            )}
           </div>
-          <h4 className={cn('mt-1 font-extrabold leading-tight', compact || height < 100 ? 'text-[13px] truncate' : 'text-[13.5px] line-clamp-2', apt.status === 'cancelled' && 'line-through')}>
-            {compact ? first : apt.patient}
-          </h4>
-          {height >= 64 && <p className="text-[11.5px] opacity-75 truncate leading-tight mt-0.5">{subtitle}</p>}
-          {hasConflict && height >= 100 && !compact && (
-            <p className="mt-1 text-[10.5px] font-semibold text-rose-500 dark:text-rose-300 leading-snug line-clamp-2">Conflito com: {conflictNames}</p>
-          )}
-          {height >= 96 && (apt.tags || []).length > 0 && !compact && <div className="mt-1"><TagChips tags={apt.tags} max={2} size="xs" /></div>}
-          {showPro && apt.professional && height >= 90 && !compact && (
-            <div className="mt-auto pt-1 text-[10.5px] opacity-70 truncate">{apt.professional}</div>
-          )}
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
@@ -1075,6 +1078,8 @@ export default function AppointmentsCalendar() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [dayHover, setDayHover] = useState<{ pn: string; idx: number } | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [sideOpen, setSideOpen] = useState(() => { try { return localStorage.getItem('crm_agenda_side') !== '0'; } catch { return true; } });
+  useEffect(() => { try { localStorage.setItem('crm_agenda_side', sideOpen ? '1' : '0'); } catch { /* ignore */ } }, [sideOpen]);
 
   // Com um profissional selecionado (ou na visão de dia) cada hora ganha mais altura: os cards ficam legíveis
   const HOUR_PX = viewMode === 'day' ? 120 : (viewMode === 'week' && true) ? (selectedProfessional === 'Todos' || selectedProfessional === 'Vários' ? HOUR_PX_DEFAULT : HOUR_PX_FOCUS) : HOUR_PX_FOCUS;
@@ -1126,27 +1131,15 @@ export default function AppointmentsCalendar() {
 
         <div className="flex-1 min-w-[8px]" />
 
-        {/* Busca */}
-        <div className="relative w-44 xl:w-60">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
-          <input
-            type="text"
-            placeholder="Buscar paciente"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-8 pr-2.5 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 outline-none w-full dark:text-white"
-          />
-        </div>
-
-        {/* Conflitos do período (só aparece quando existem) */}
-        {visibleConflicts > 0 && (
-          <span
-            className="flex items-center gap-1 px-2 py-1.5 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-xs font-bold"
-            title={`${visibleConflicts} agendamento(s) com horário sobreposto para o mesmo profissional neste período`}
-          >
-            <AlertTriangle size={13} />{visibleConflicts}
-          </span>
-        )}
+        {/* Abrir/fechar a lateral */}
+        <button
+          onClick={() => setSideOpen(o => !o)}
+          aria-label={sideOpen ? 'Fechar lateral' : 'Abrir lateral'}
+          title={sideOpen ? 'Fechar lateral' : 'Abrir lateral'}
+          className="hidden lg:block p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer"
+        >
+          <PanelLeft size={16} />
+        </button>
 
         {/* Filtros */}
         <div className="relative">
@@ -1154,27 +1147,28 @@ export default function AppointmentsCalendar() {
             onClick={() => { setFiltersOpen(o => !o); setMoreOpen(false); }}
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold cursor-pointer",
-              selectedTag !== 'Todas' ? "border-blue-400 text-blue-700 bg-blue-50 dark:bg-blue-950/40 dark:text-blue-300" : "border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800"
+              (selectedTag !== 'Todas' || selectedStatusFilter !== 'Todos') ? "border-blue-400 text-blue-700 bg-blue-50 dark:bg-blue-950/40 dark:text-blue-300" : "border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800"
             )}
           >
             <SlidersHorizontal size={13} />
-            Filtros
-            {selectedTag !== 'Todas' && <span className="w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center">1</span>}
+            Filtrar
           </button>
           {filtersOpen && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setFiltersOpen(false)} />
-              <div className="absolute right-0 mt-2 w-64 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl p-3 space-y-3 text-xs">
-                <label className="block space-y-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Etiqueta do Clinicorp</span>
-                  <select value={selectedTag} onChange={e => setSelectedTag(e.target.value)} className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg outline-none dark:text-white">
-                    <option value="Todas">Todas</option>
+              <div className="absolute right-0 mt-2 w-56 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl p-3 space-y-2 text-xs">
+                <select value={selectedStatusFilter} onChange={e => setSelectedStatusFilter(e.target.value)} className="w-full px-2.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg outline-none dark:text-white">
+                  <option value="Todos">Todos os status</option>
+                  {(Object.keys(STATUS_CONFIG) as AppointmentStatusType[]).map(st => <option key={st} value={st}>{STATUS_CONFIG[st].label}</option>)}
+                </select>
+                {tagOptions.length > 0 && (
+                  <select value={selectedTag} onChange={e => setSelectedTag(e.target.value)} className="w-full px-2.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg outline-none dark:text-white">
+                    <option value="Todas">Todas as etiquetas</option>
                     {tagOptions.map(t => <option key={t.name} value={t.name}>{t.name} ({t.n})</option>)}
                   </select>
-                  {tagOptions.length === 0 && <span className="text-[10px] text-slate-400">Sem etiquetas ainda: rode a migration e sincronize com o Clinicorp.</span>}
-                </label>
-                {selectedTag !== 'Todas' && (
-                  <button onClick={() => setSelectedTag('Todas')} className="text-[11px] font-bold text-blue-600 hover:underline cursor-pointer">Limpar filtros</button>
+                )}
+                {(selectedTag !== 'Todas' || selectedStatusFilter !== 'Todos') && (
+                  <button onClick={() => { setSelectedTag('Todas'); setSelectedStatusFilter('Todos'); }} className="text-[11px] font-bold text-blue-600 hover:underline cursor-pointer">Limpar</button>
                 )}
               </div>
             </>
@@ -1325,7 +1319,7 @@ export default function AppointmentsCalendar() {
       {/* Main Workspace: Left Mini-Calendar/Filters + Right Calendar Grid */}
       <div className="flex-1 min-h-0 flex gap-4 overflow-hidden">
         {/* Left Side Panel: Mini Calendar + Filter */}
-        <div className="w-72 hidden lg:flex flex-col gap-4 shrink-0 overflow-y-auto pr-1 custom-scrollbar">
+        <div className={cn("w-72 hidden flex-col gap-4 shrink-0 overflow-y-auto pr-1 custom-scrollbar", sideOpen && "lg:flex")}>
           {/* Mini Calendar Widget */}
           <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
             <div className="flex items-center justify-between mb-3">
@@ -1913,7 +1907,7 @@ export default function AppointmentsCalendar() {
                                 key={apt.id}
                                 onClick={(e) => { e.stopPropagation(); setSelectedAppointmentDetail(apt); }}
                                 title={`${apt.patient} · ${range(start, realEnd)}${apt.procedure ? ` · ${apt.procedure}` : ''}`}
-                                className={cn('appointment-card absolute overflow-hidden rounded-lg px-2 py-1 cursor-pointer text-slate-700 dark:text-slate-100 hover:shadow-lg hover:z-20 transition-shadow', hasConflict && 'ring-2 ring-rose-500')}
+                                className={cn('appointment-card absolute overflow-hidden rounded-lg px-2 py-1 cursor-pointer text-slate-800 dark:text-slate-100 hover:shadow-lg hover:z-20 transition-shadow', hasConflict && 'ring-2 ring-rose-500')}
                                 style={{
                                   top: ((start - gridStart * 60) / 15) * SLOT + 1,
                                   height: h,
@@ -1924,15 +1918,15 @@ export default function AppointmentsCalendar() {
                                   zIndex: 2
                                 }}
                               >
-                                {done && <Check size={14} className="absolute right-1.5 top-1 text-emerald-700 dark:text-emerald-300" strokeWidth={3} />}
-                                {bucket === 'missed' && <X size={14} className="absolute right-1.5 top-1 text-rose-600" strokeWidth={3} />}
+                                {done && <Check size={15} className="absolute right-1.5 top-1.5 text-emerald-700 dark:text-emerald-300" strokeWidth={3} />}
+                                {bucket === 'missed' && <X size={15} className="absolute right-1.5 top-1.5 text-rose-600" strokeWidth={3} />}
                                 {h < 44 ? (
-                                  <p className={cn('truncate text-[12px] leading-tight mt-0.5', (done || bucket === 'missed') && 'pr-4', apt.status === 'cancelled' && 'line-through opacity-60')}>{apt.patient}, <span className="text-[11px] opacity-70">{range(start, realEnd)}</span></p>
+                                  <p className={cn('truncate text-[13px] font-bold leading-tight mt-0.5', (done || bucket === 'missed') && 'pr-5', apt.status === 'cancelled' && 'line-through opacity-60')}>{apt.patient} <span className="text-[11.5px] font-medium opacity-75">{range(start, realEnd)}</span></p>
                                 ) : (
                                   <>
-                                    <p className={cn('truncate text-[12.5px] leading-tight', (done || bucket === 'missed') && 'pr-4', apt.status === 'cancelled' && 'line-through opacity-60')}>{apt.patient}</p>
-                                    <p className="text-[11px] opacity-70 leading-tight">{range(start, realEnd)}</p>
-                                    {h >= 72 && apt.category && <p className="text-[11px] opacity-70 truncate leading-tight mt-0.5">{apt.category}</p>}
+                                    <p className={cn('text-[14px] font-bold leading-tight line-clamp-2', (done || bucket === 'missed') && 'pr-5', apt.status === 'cancelled' && 'line-through opacity-60')}>{apt.patient}</p>
+                                    <p className="text-[12px] font-medium opacity-80 leading-tight mt-0.5">{range(start, realEnd)}</p>
+                                    {h >= 72 && apt.category && <p className="text-[11.5px] opacity-70 truncate leading-tight mt-0.5">{apt.category}</p>}
                                   </>
                                 )}
                               </div>
