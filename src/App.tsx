@@ -23,7 +23,7 @@ import DashboardMain from './components/dashboard/DashboardMain';
 const Pipeline = lazy(() => import('./components/leads/Pipeline'));
 import LeadDetail from './components/leads/LeadDetail';
 const PatientsList = lazy(() => import('./components/patients/PatientsList'));
-const AppointmentsCalendar = lazy(() => import('./components/appointments/AppointmentsCalendar'));
+const AgendaPage = lazy(() => import('./components/appointments/AgendaPage'));
 const FollowUpWorkspace = lazy(() => import('./components/followups/FollowUpWorkspace'));
 const TaskWorkspace = lazy(() => import('./components/tasks/TaskWorkspace'));
 const DataAnalysisWorkspace = lazy(() => import('./components/analytics/DataAnalysisWorkspace'));
@@ -229,7 +229,7 @@ export default function App() {
                   exit={{ opacity: 0, scale: 0.99 }}
                   transition={{ duration: 0.18 }}
                 >
-                  <AppointmentsCalendar />
+                  <AgendaPage />
                 </motion.div>
               </ProtectedModuleRoute>
             ) : activeTab === 'followups' ? (
