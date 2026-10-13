@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
+  X,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -53,7 +54,7 @@ import {
 } from '../../lib/syncQueue';
 import { createCalendarEvent, performBidirectionalSync } from '../../lib/googleCalendar';
 import { BOOKING_PROFESSIONAL } from '../../lib/bookingRule';
-import { isSupabaseConfigured, fetchAppointmentsFromDb, saveAppointmentsToDb, fetchProfessionalsFromDb } from '../../lib/supabase';
+import { isSupabaseConfigured, fetchAppointmentsFromDb, saveAppointmentsToDb, fetchProfessionalsFromDb, statusBucket } from '../../lib/supabase';
 import { buildGoogleEventFromAppointment, getCalendarFieldMapping } from '../../lib/googleCalendarMapping';
 import { getGoogleSyncSettings, recordSyncExecution } from '../../lib/googleSyncSettings';
 
@@ -196,7 +197,14 @@ const profHue = (name?: string) => {
   for (const ch of String(name || '')) h = (h * 31 + ch.charCodeAt(0)) % 360;
   return h;
 };
+// Cores dos profissionais como aparecem na agenda do Clinicorp (a API não informa a cor deles).
+const PRO_PALETTE: Record<string, string> = {
+  bruno: '#5d8a1c', giselle: '#f06ea9', jardel: '#1b2a6b', jessica: '#ef6c7d', joao: '#f57c00', lucas: '#7fb2f0'
+};
 const profColors = (name?: string) => {
+  const key = String(name || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().split(/\s+/)[0];
+  const fixed = PRO_PALETTE[key];
+  if (fixed) return { border: fixed, bg: `${fixed}29` };
   const h = profHue(name);
   return { border: `hsl(${h} 62% 42%)`, bg: `hsl(${h} 70% 48% / 0.16)` };
 };
@@ -310,10 +318,24 @@ export default function AppointmentsCalendar() {
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [selectedSlotForSchedule, setSelectedSlotForSchedule] = useState<{ date: string; time: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedProfessional, setSelectedProfessional] = useState<string>(() => {
-    try { return localStorage.getItem('crm_agenda_professional') || 'Todos'; } catch { return 'Todos'; }
+  // Profissionais marcados na lateral (null = todos). Persistido; a primeira escolha ainda é automática.
+  const [checkedProfs, setCheckedProfs] = useState<string[] | null>(() => {
+    try { const v = localStorage.getItem('crm_agenda_profs'); return v ? JSON.parse(v) : null; } catch { return null; }
   });
-  useEffect(() => { try { localStorage.setItem('crm_agenda_professional', selectedProfessional); } catch {} }, [selectedProfessional]);
+  const profsTouchedRef = useRef((() => { try { return localStorage.getItem('crm_agenda_profs') !== null; } catch { return false; } })());
+  useEffect(() => { try { localStorage.setItem('crm_agenda_profs', JSON.stringify(checkedProfs)); } catch {} }, [checkedProfs]);
+  const selectedProfessional = checkedProfs === null ? 'Todos' : checkedProfs.length === 1 ? checkedProfs[0] : 'Vários';
+  const isChecked = (name?: string) => checkedProfs === null || checkedProfs.includes(name || '');
+  /** Mantém a assinatura antiga: um nome seleciona só ele, 'Todos' seleciona todos. */
+  const setSelectedProfessional = (name: string) => { profsTouchedRef.current = true; setCheckedProfs(name === 'Todos' ? null : [name]); };
+  const toggleProf = (name: string, all: string[]) => {
+    profsTouchedRef.current = true;
+    setCheckedProfs(prev => {
+      const cur = prev === null ? all : prev;
+      const next = cur.includes(name) ? cur.filter(x => x !== name) : [...cur, name];
+      return next.length === 0 || next.length === all.length ? null : next;
+    });
+  };
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>('Todos');
   const [selectedTag, setSelectedTag] = useState<string>('Todas');
   const [selectedAppointmentDetail, setSelectedAppointmentDetail] = useState<Appointment | null>(null);
@@ -879,7 +901,7 @@ export default function AppointmentsCalendar() {
 
   const filteredAppointments = useMemo(() => {
     return clinicAppointments.filter(a => {
-      const matchesProfessional = selectedProfessional === 'Todos' || a.professional === selectedProfessional;
+      const matchesProfessional = isChecked(a.professional);
       const matchesStatus = selectedStatusFilter === 'Todos' || a.status === selectedStatusFilter;
       const matchesTag = selectedTag === 'Todas' || (a.tags || []).some(t => t.name === selectedTag);
       const matchesSearch = (a.patient && a.patient.toLowerCase().includes(searchTerm.toLowerCase())) || 
@@ -901,7 +923,7 @@ export default function AppointmentsCalendar() {
       }
       return 0;
     });
-  }, [clinicAppointments, selectedProfessional, selectedStatusFilter, selectedTag, searchTerm, viewMode, customStartDate, customEndDate, customSortOrder]);
+  }, [clinicAppointments, checkedProfs, selectedStatusFilter, selectedTag, searchTerm, viewMode, customStartDate, customEndDate, customSortOrder]);
 
   // Group appointments by date for custom view
   const customAppointmentsByDate = useMemo(() => {
@@ -938,7 +960,6 @@ export default function AppointmentsCalendar() {
 
   // Na primeira vez que a semana abre com vários profissionais, começa por um deles (agenda legível);
   // "Todos os profissionais" continua a um clique.
-  const autoPickedRef = useRef((() => { try { return localStorage.getItem('crm_agenda_professional') !== null; } catch { return false; } })());
 
   // Profissionais cadastrados na(s) clínica(s) + quem já aparece em agendamentos
   const [dbProfessionalNames, setDbProfessionalNames] = useState<string[]>([]);
@@ -959,14 +980,14 @@ export default function AppointmentsCalendar() {
     return ['Todos', ...all.sort((x, y) => Number(isMain(y)) - Number(isMain(x)))];
   }, [clinicAppointments, dbProfessionalNames]);
 
-  // Ao abrir, a agenda do profissional principal (Bruno) já vem selecionada; "Todos" fica a um clique
+  // Sem escolha feita ainda: a visão do dia mostra todos os profissionais lado a lado (como no Clinicorp);
+  // semana e lista começam na agenda do principal (Bruno), com os demais a um clique.
   useEffect(() => {
-    if (autoPickedRef.current || selectedProfessional !== 'Todos') return;
+    if (profsTouchedRef.current) return;
     const main = professionals.find(pn => pn !== 'Todos' && isMain(pn));
     if (!main) return;
-    autoPickedRef.current = true;
-    setSelectedProfessional(main);
-  }, [professionals, selectedProfessional]);
+    setCheckedProfs(viewMode === 'day' || viewMode === 'month' || viewMode === 'custom' ? null : [main]);
+  }, [professionals, viewMode]);
 
   const handleExport = () => {
     exportToCSV(filteredAppointments, 'agendamentos_agenda');
@@ -1051,10 +1072,11 @@ export default function AppointmentsCalendar() {
     setSelectedDate(d);
   };
   const [moreOpen, setMoreOpen] = useState(false);
+  const [dayHover, setDayHover] = useState<{ pn: string; idx: number } | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   // Com um profissional selecionado (ou na visão de dia) cada hora ganha mais altura: os cards ficam legíveis
-  const HOUR_PX = viewMode === 'week' && selectedProfessional === 'Todos' ? HOUR_PX_DEFAULT : HOUR_PX_FOCUS;
+  const HOUR_PX = viewMode === 'day' ? 120 : (viewMode === 'week' && true) ? (selectedProfessional === 'Todos' || selectedProfessional === 'Vários' ? HOUR_PX_DEFAULT : HOUR_PX_FOCUS) : HOUR_PX_FOCUS;
 
   // Conflitos só do período que está na tela (e sem contar cancelados)
   const [rangeStart, rangeEnd] =
@@ -1357,37 +1379,39 @@ export default function AppointmentsCalendar() {
             </div>
           </div>
 
-          {/* Professionals Filter */}
+          {/* Profissionais: caixas de seleção, como no Clinicorp */}
           <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-            <h3 className="text-xs font-bold text-slate-800 dark:text-white mb-3 uppercase tracking-wider flex items-center gap-1.5">
-               <Stethoscope size={13} className="text-blue-500" />
-               Profissional
-            </h3>
-            <div className="space-y-1.5">
-              {professionals.map(prof => {
-                const n = prof === 'Todos'
-                  ? clinicAppointments.filter(a => a.status !== 'cancelled' && (viewMode === 'day' ? a.date === formatDateStr(selectedDate) : weekDays.some(d => formatDateStr(d) === a.date))).length
-                  : clinicAppointments.filter(a => a.professional === prof && a.status !== 'cancelled' && (viewMode === 'day' ? a.date === formatDateStr(selectedDate) : weekDays.some(d => formatDateStr(d) === a.date))).length;
-                const active = selectedProfessional === prof;
+            <div className="flex items-center justify-between mb-2.5">
+              <h3 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
+                <Stethoscope size={13} className="text-blue-500" />
+                Profissionais
+              </h3>
+              <button
+                onClick={() => { profsTouchedRef.current = true; setCheckedProfs(checkedProfs === null ? [] : null); }}
+                className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+              >
+                {checkedProfs === null ? 'Limpar' : 'Todos'}
+              </button>
+            </div>
+            <div className="space-y-0.5">
+              {professionals.filter(pn => pn !== 'Todos').map(prof => {
+                const allPros = professionals.filter(pn => pn !== 'Todos');
+                const n = clinicAppointments.filter(a => a.professional === prof && a.status !== 'cancelled' && (viewMode === 'day' ? a.date === formatDateStr(selectedDate) : weekDays.some(d => formatDateStr(d) === a.date))).length;
+                const on = isChecked(prof);
+                const col = profColors(prof).border;
                 return (
-                  <button
-                    key={prof}
-                    onClick={() => setSelectedProfessional(prof)}
-                    className={cn(
-                      "w-full text-left px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-2",
-                      active ? "bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400" : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                    )}
-                  >
-                    <span className="truncate flex items-center gap-2 min-w-0">
-                      {prof !== 'Todos' && <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: profColors(prof).border }} />}
-                      <span className="truncate">{prof === 'Todos' ? 'Todos os profissionais' : prof}</span>
-                      {isMain(prof) && <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--color-primary-blue)]/15 text-[var(--color-primary-blue)] shrink-0">Principal</span>}
+                  <label key={prof} className="flex items-center gap-2.5 px-1.5 py-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer select-none">
+                    <span
+                      className="w-[18px] h-[18px] rounded-[5px] border-2 flex items-center justify-center shrink-0 transition-colors"
+                      style={{ borderColor: col, background: on ? col : 'transparent' }}
+                    >
+                      {on && <Check size={12} className="text-white" strokeWidth={3} />}
                     </span>
-                    <span className="flex items-center gap-1.5 shrink-0">
-                      <span className="text-[10px] font-bold opacity-60">{n}</span>
-                      {active && <Check size={14} />}
-                    </span>
-                  </button>
+                    <input type="checkbox" className="sr-only" checked={on} onChange={() => toggleProf(prof, allPros)} />
+                    <span className="flex-1 min-w-0 text-[13px] font-medium text-slate-700 dark:text-slate-200 truncate">{prof}</span>
+                    {isMain(prof) && <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--color-primary-blue)]/15 text-[var(--color-primary-blue)] shrink-0">Principal</span>}
+                    <span className="text-[10px] font-bold text-slate-400 shrink-0">{n}</span>
+                  </label>
                 );
               })}
             </div>
@@ -1585,7 +1609,7 @@ export default function AppointmentsCalendar() {
                               <div className="absolute inset-x-0 border-t-2 border-rose-500 z-20 pointer-events-none" style={{ top: ((nowMin - gridStart * 60) / 60) * HOUR_PX }} />
                             )}
 
-                            {blockedSlots.filter(bs => bs.date === dateStr && (selectedProfessional === 'Todos' || bs.professional === selectedProfessional)).map(bs => {
+                            {blockedSlots.filter(bs => bs.date === dateStr && isChecked(bs.professional)).map(bs => {
                               const bStart = timeToMinutes(bs.time);
                               const bEnd = bStart + Math.max(Number(bs.duration) || 30, 15);
                               return (
@@ -1771,120 +1795,144 @@ export default function AppointmentsCalendar() {
             </div>
           )}
 
-          {/* 3. DAY VIEW: uma coluna por profissional (como a agenda do Clinicorp) */}
+          {/* 3. DIA: uma coluna por profissional, no modelo da agenda do Clinicorp */}
           {viewMode === 'day' && (() => {
             const dateStr = formatDateStr(selectedDate);
             const dayAll = filteredAppointments.filter(a => a.date === dateStr && (selectedStatusFilter === 'cancelled' || a.status !== 'cancelled'));
-            const base = selectedProfessional !== 'Todos' ? [selectedProfessional] : professionals.filter(pn => pn !== 'Todos');
+            const dayBlocked = blockedSlots.filter(bs => bs.date === dateStr && isChecked(bs.professional));
+            const base = professionals.filter(pn => pn !== 'Todos' && isChecked(pn));
             const extra = Array.from(new Set(dayAll.map(a => a.professional).filter(pn => pn && !base.includes(pn)))) as string[];
             const hasNone = dayAll.some(a => !a.professional);
             const names = [...base, ...extra, ...(hasNone ? ['Sem profissional'] : [])];
-            const first = dayAll.length ? Math.min(...dayAll.map(a => Math.floor(timeToMinutes(a.time) / 60))) : 7;
-            const last = dayAll.length ? Math.max(...dayAll.map(a => Math.ceil((timeToMinutes(a.time) + (a.duration || 30)) / 60))) : 21;
-            const gridStart = Math.min(7, first);
-            const gridEnd = Math.max(22, last);
-            const hours = Array.from({ length: gridEnd - gridStart }, (_, i) => gridStart + i);
-            const cols = `60px repeat(${Math.max(names.length, 1)}, minmax(190px, 1fr))`;
+            const all = [...dayAll, ...dayBlocked];
+            const first = all.length ? Math.min(...all.map(a => Math.floor(timeToMinutes(a.time) / 60))) : 8;
+            const last = all.length ? Math.max(...all.map(a => Math.ceil((timeToMinutes(a.time) + (a.duration || 30)) / 60))) : 19;
+            const gridStart = Math.min(8, first);
+            const gridEnd = Math.max(19, last);
+            const slots = (gridEnd - gridStart) * 4;                // linhas de 15 minutos
+            const SLOT = HOUR_PX / 4;
             const isToday = dateStr === todayStr;
             const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+            const cols = `64px repeat(${Math.max(names.length, 1)}, minmax(150px, 1fr))`;
+            const hm = (min: number, suffix = false) => `${Math.floor(min / 60)}${min % 60 ? ':' + String(min % 60).padStart(2, '0') : ''}${suffix ? 'h' : ''}`;
+            const label = (min: number) => `${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}`;
+            const range = (s: number, e: number) => `${hm(s)} - ${hm(e, true)}`;
+            const tint = (col: string, pct: number) => `color-mix(in srgb, ${col} ${pct}%, var(--color-surface-elevated))`;
 
-            if (dayAll.length === 0 && names.length === 0) {
-              return <div className="flex-1 flex items-center justify-center text-sm text-slate-400">Nenhum agendamento neste dia.</div>;
+            if (names.length === 0) {
+              return <div className="flex-1 flex items-center justify-center text-sm text-slate-400 p-8">Marque ao menos um profissional na lista à esquerda.</div>;
             }
 
             return (
-              <div className="flex-1 overflow-auto custom-scrollbar">
+              <div className="flex-1 overflow-auto custom-scrollbar bg-white dark:bg-slate-900">
                 <div className="min-w-full">
-                  {/* Cabeçalho: um profissional por coluna (fica fixo ao rolar) */}
-                  <div className="grid sticky top-0 z-30 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800" style={{ gridTemplateColumns: cols }}>
-                    <div className="sticky left-0 z-40 p-3 text-[10px] font-bold text-slate-400 uppercase text-center bg-slate-50 dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800">Hora</div>
+                  <div className="grid sticky top-0 z-30 bg-white dark:bg-slate-900" style={{ gridTemplateColumns: cols }}>
+                    <div className="sticky left-0 z-40 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800" />
                     {names.map(pn => {
                       const count = dayAll.filter(a => (a.professional || 'Sem profissional') === pn).length;
+                      const col = profColors(pn).border;
                       return (
-                        <div key={pn} className="p-2.5 text-center border-r border-slate-200 dark:border-slate-800 last:border-r-0 min-w-0">
-                          <div className="flex items-center justify-center gap-1.5">
-                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: profColors(pn).border }} />
-                            <span className="text-xs font-bold text-slate-800 dark:text-white truncate">{pn}</span>
-                          </div>
-                          <span className="text-[10px] font-bold text-slate-400">{count} {count === 1 ? 'paciente' : 'pacientes'}</span>
+                        <div key={pn} className="text-center pt-2 pb-1.5 min-w-0 border-b border-slate-200 dark:border-slate-800" style={{ boxShadow: `inset 0 -3px 0 ${col}` }}>
+                          <p className="text-[13.5px] font-medium text-slate-800 dark:text-white truncate px-2">{pn}</p>
+                          <p className="text-[11.5px] text-slate-500 dark:text-slate-400 pb-0.5">Pacientes: {count}</p>
                         </div>
                       );
                     })}
                   </div>
 
-                  <div className="grid" style={{ gridTemplateColumns: cols, height: hours.length * HOUR_PX }}>
-                    <div className="sticky left-0 z-20 relative border-r border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 select-none">
-                      {hours.map(h => (
-                        <div key={h} className={cn("absolute inset-x-0 text-[10px] font-bold text-slate-400 text-center", h === gridStart ? "pt-1" : "-translate-y-1/2")} style={{ top: (h - gridStart) * HOUR_PX }}>
-                          {String(h).padStart(2, '0')}:00
-                        </div>
-                      ))}
+                  <div className="grid relative" style={{ gridTemplateColumns: cols, height: slots * SLOT }}>
+                    {/* Horários de 15 em 15 minutos */}
+                    <div className="sticky left-0 z-20 relative bg-white dark:bg-slate-900 select-none">
+                      {Array.from({ length: slots }, (_, i) => {
+                        const min = gridStart * 60 + i * 15;
+                        const isNow = isToday && nowMin >= min && nowMin < min + 15;
+                        return (
+                          <div key={i} className={cn('absolute inset-x-0 text-right pr-2 text-[11.5px] leading-none', min % 60 === 0 ? 'text-slate-700 dark:text-slate-200 font-medium' : 'text-slate-400', isNow && 'bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-200')} style={{ top: i * SLOT, height: SLOT, paddingTop: 3 }}>
+                            {label(min)}
+                          </div>
+                        );
+                      })}
                     </div>
 
                     {names.map(pn => {
+                      const col = profColors(pn).border;
                       const colApts = layoutDayAppointments(dayAll.filter(a => (a.professional || 'Sem profissional') === pn));
+                      const colBlocked = dayBlocked.filter(bs => (bs.professional || 'Sem profissional') === pn);
                       return (
                         <div
                           key={pn}
+                          onMouseMove={(e) => {
+                            const y = e.clientY - (e.currentTarget as HTMLElement).getBoundingClientRect().top;
+                            const idx = Math.max(0, Math.min(slots - 1, Math.floor(y / SLOT)));
+                            setDayHover(h => (h && h.pn === pn && h.idx === idx ? h : { pn, idx }));
+                          }}
+                          onMouseLeave={() => setDayHover(null)}
                           onClick={(e) => {
                             if ((e.target as HTMLElement).closest('.appointment-card')) return;
                             const y = e.clientY - (e.currentTarget as HTMLElement).getBoundingClientRect().top;
-                            handleOpenSlot(dateStr, minutesToTime(gridStart * 60 + Math.floor((y / HOUR_PX) * 2) * 30));
+                            handleOpenSlot(dateStr, minutesToTime(gridStart * 60 + Math.floor(y / SLOT) * 15));
                           }}
-                          className="relative border-r border-slate-100 dark:border-slate-800/60 last:border-r-0 cursor-pointer hover:bg-blue-50/20 dark:hover:bg-blue-900/5 transition-colors min-w-0"
+                          className="relative cursor-pointer min-w-0 border-l border-white/60 dark:border-slate-900"
+                          style={{ background: `color-mix(in srgb, ${col} 9%, var(--color-surface-elevated))` }}
                         >
-                          {hours.map(h => (
-                            <div key={h} className="absolute inset-x-0 border-t border-slate-100 dark:border-slate-800 pointer-events-none" style={{ top: (h - gridStart) * HOUR_PX }} />
+                          {Array.from({ length: slots }, (_, i) => (
+                            <div key={i} className="absolute inset-x-0 pointer-events-none" style={{ top: i * SLOT, borderTop: `1px solid ${(gridStart * 60 + i * 15) % 60 === 0 ? 'rgba(100,116,139,0.28)' : 'rgba(100,116,139,0.12)'}` }} />
                           ))}
                           {isToday && nowMin >= gridStart * 60 && nowMin <= gridEnd * 60 && (
-                            <div className="absolute inset-x-0 border-t-2 border-rose-500 z-20 pointer-events-none" style={{ top: ((nowMin - gridStart * 60) / 60) * HOUR_PX }} />
+                            <div className="absolute inset-x-0 z-10 pointer-events-none bg-rose-400/25" style={{ top: Math.floor((nowMin - gridStart * 60) / 15) * SLOT, height: SLOT }} />
+                          )}
+                          {dayHover && dayHover.pn === pn && (
+                            <div className="absolute inset-x-0 z-10 pointer-events-none" style={{ top: dayHover.idx * SLOT, height: SLOT, background: 'rgba(15,107,120,0.12)' }}>
+                              <span className="absolute left-2 top-1/2 -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-900 text-white text-[12px] px-2.5 py-1 shadow-lg">Clique para criar um agendamento</span>
+                            </div>
                           )}
 
-                          {blockedSlots.filter(bs => bs.date === dateStr && (bs.professional || 'Sem profissional') === pn).map(bs => {
-                            const bStart = timeToMinutes(bs.time);
-                            const bEnd = bStart + Math.max(Number(bs.duration) || 30, 15);
+                          {colBlocked.map(bs => {
+                            const s = timeToMinutes(bs.time), e = s + Math.max(Number(bs.duration) || 30, 15);
+                            const label = bs.procedure && bs.procedure !== 'Horário bloqueado' ? bs.procedure : (bs.category || 'Agenda fechada');
+                            const h = ((e - s) / 15) * SLOT - 2;
                             return (
-                              <div
-                                key={bs.id}
-                                title={`Agenda fechada: ${bs.time}–${minutesToTime(bEnd)}`}
-                                className="absolute inset-x-0 pointer-events-none"
-                                style={{
-                                  top: ((bStart - gridStart * 60) / 60) * HOUR_PX,
-                                  height: ((bEnd - bStart) / 60) * HOUR_PX,
-                                  background: 'repeating-linear-gradient(135deg, rgba(100,116,139,0.10) 0 6px, transparent 6px 12px)',
-                                  borderTop: '1px dashed rgba(100,116,139,0.35)'
-                                }}
-                              >
-                                <span className="absolute right-1 top-0.5 text-[8px] font-bold uppercase tracking-wider text-slate-400/80">Fechada</span>
+                              <div key={bs.id} className="absolute inset-x-1 rounded-lg px-2.5 py-1 overflow-hidden pointer-events-none text-[12px] text-slate-600 dark:text-slate-300" style={{ top: ((s - gridStart * 60) / 15) * SLOT + 1, height: h, background: tint(bs.categoryColor || '#94a3b8', 28), zIndex: 1 }}>
+                                {h < 40 ? <span className="truncate block">{label}, <span className="text-[11px] opacity-70">{range(s, e)}</span></span> : (<><p className="truncate">{label}</p><p className="text-[11px] opacity-70">{range(s, e)}</p></>)}
                               </div>
                             );
                           })}
 
-                          {colApts.map(({ apt, start, end, realEnd, lane, lanes, span }) => {
-                            const conf = STATUS_CONFIG[apt.status] || STATUS_CONFIG.pending;
+                          {colApts.map(({ apt, start, realEnd, end, lane, lanes, span }) => {
                             const hasConflict = conflictMap.get(apt.id)?.hasConflict;
-                            const pc = profColors(apt.professional);
-                            const height = Math.max(((end - start) / 60) * HOUR_PX - 2, MIN_CARD_PX);
+                            const catColor = apt.categoryColor || col;
+                            const h = ((end - start) / 15) * SLOT - 2;
+                            const bucket = statusBucket(apt.status);
+                            const done = bucket === 'attended' || bucket === 'confirmed';
+                            const wPct = (100 / lanes) * span;
                             return (
-                              <GridAptCard
+                              <div
                                 key={apt.id}
-                                apt={apt}
-                                height={height}
-                                widthPct={(100 / lanes) * span}
-                                colPx={Math.max(190, Math.round(1150 / Math.max(names.length, 1)))}
-                                realEnd={realEnd}
-                                hasConflict={hasConflict}
-                                conflictNames={(conflictMap.get(apt.id)?.conflictingWith || []).map(x => x.patient).join(', ')}
-                                pc={pc}
-                                showPro={false}
-                                onOpen={() => setSelectedAppointmentDetail(apt)}
+                                onClick={(e) => { e.stopPropagation(); setSelectedAppointmentDetail(apt); }}
+                                title={`${apt.patient} · ${range(start, realEnd)}${apt.procedure ? ` · ${apt.procedure}` : ''}`}
+                                className={cn('appointment-card absolute overflow-hidden rounded-lg px-2 py-1 cursor-pointer text-slate-700 dark:text-slate-100 hover:shadow-lg hover:z-20 transition-shadow', hasConflict && 'ring-2 ring-rose-500')}
                                 style={{
-                                  top: ((start - gridStart * 60) / 60) * HOUR_PX + 1,
-                                  height,
-                                  left: `calc(${lane * (100 / lanes)}% + 2px)`,
-                                  width: `calc(${(100 / lanes) * span}% - 4px)`
+                                  top: ((start - gridStart * 60) / 15) * SLOT + 1,
+                                  height: h,
+                                  left: `calc(${lane * (100 / lanes)}% + 3px)`,
+                                  width: `calc(${wPct}% - 6px)`,
+                                  background: tint(catColor, 38),
+                                  borderLeft: `4px solid ${catColor}`,
+                                  zIndex: 2
                                 }}
-                              />
+                              >
+                                {done && <Check size={14} className="absolute right-1.5 top-1 text-emerald-700 dark:text-emerald-300" strokeWidth={3} />}
+                                {bucket === 'missed' && <X size={14} className="absolute right-1.5 top-1 text-rose-600" strokeWidth={3} />}
+                                {h < 44 ? (
+                                  <p className={cn('truncate text-[12px] leading-tight mt-0.5', (done || bucket === 'missed') && 'pr-4', apt.status === 'cancelled' && 'line-through opacity-60')}>{apt.patient}, <span className="text-[11px] opacity-70">{range(start, realEnd)}</span></p>
+                                ) : (
+                                  <>
+                                    <p className={cn('truncate text-[12.5px] leading-tight', (done || bucket === 'missed') && 'pr-4', apt.status === 'cancelled' && 'line-through opacity-60')}>{apt.patient}</p>
+                                    <p className="text-[11px] opacity-70 leading-tight">{range(start, realEnd)}</p>
+                                    {h >= 72 && apt.category && <p className="text-[11px] opacity-70 truncate leading-tight mt-0.5">{apt.category}</p>}
+                                  </>
+                                )}
+                              </div>
                             );
                           })}
                         </div>
