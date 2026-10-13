@@ -969,6 +969,16 @@ const dayKey = (offset: number) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+/** Limites (YYYY-MM-DD) de cada opção do seletor de período do dashboard. */
+function rangeBounds(range?: string): [string, string] {
+  switch (range) {
+    case 'hoje': return [dayKey(0), dayKey(0)];
+    case 'ontem': return [dayKey(-1), dayKey(-1)];
+    case '7d': return [dayKey(-6), dayKey(0)];
+    default: return [dayKey(-29), dayKey(0)];
+  }
+}
+
 const EMPTY_STATS = {
   leads: 0,
   appointments: 0,
@@ -1007,7 +1017,16 @@ export function useSupabaseDashboardStats(clinicId?: string, range?: string) {
       try {
         const started = performance.now();
         const sb = getSupabase();
-        const [leads, apts] = await Promise.all([fetchLeadsFromDb(clinicId), loadAppointments(clinicId)]);
+        const [allLeads, aptsAll] = await Promise.all([fetchLeadsFromDb(clinicId), loadAppointments(clinicId)]);
+
+        // Período escolhido no topo do dashboard (leads pela data de entrada, consultas pela data da consulta)
+        const [rangeFrom, rangeTo] = rangeBounds(range);
+        const inRange = (d: string) => {
+          const day = String(d || '').slice(0, 10);
+          return !!day && day >= rangeFrom && day <= rangeTo;
+        };
+        const leads = allLeads.filter(l => inRange(l.createdAt));
+        const apts = aptsAll.filter(a => inRange(a.appointment_date || a.date));
 
         let followups = 0;
         let activeWebhooks = 0;
@@ -1021,7 +1040,7 @@ export function useSupabaseDashboardStats(clinicId?: string, range?: string) {
 
         const today = dayKey(0), tomorrow = dayKey(1), yesterday = dayKey(-1);
         const on = (day: string, statuses: string[]) =>
-          apts.filter(a => String(a.appointment_date || a.date || '').slice(0, 10) === day && statuses.includes(String(a.status))).length;
+          aptsAll.filter(a => String(a.appointment_date || a.date || '').slice(0, 10) === day && statuses.includes(String(a.status))).length;
 
         const soldLeads = leads.filter(l => l.status === LeadStatus.SOLD);
         const sold = soldLeads.length;
