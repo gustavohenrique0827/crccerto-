@@ -168,12 +168,12 @@ function GridAptCard({ apt, height, widthPct, colPx, realEnd, hasConflict, confl
         </div>
       ) : (
         <div className="flex items-start gap-1.5 h-full min-h-0">
-          <User size={compact ? 12 : 15} className="shrink-0 mt-[17px] opacity-80" />
+          {!compact && <User size={15} className="shrink-0 mt-[17px] opacity-80" />}
           <div className="min-w-0 flex-1 flex flex-col">
             <span className="text-[11px] font-medium opacity-80 leading-tight truncate">{compact ? apt.time : range}</span>
-            <h4 className={cn('text-[14px] font-extrabold leading-tight', height >= 80 ? 'line-clamp-2' : 'truncate', apt.status === 'cancelled' && 'line-through')}>{apt.patient}</h4>
-            <p className="text-[11.5px] opacity-75 leading-tight truncate">{subtitle}</p>
-            {hasConflict && height >= 90 && <p className="text-[10.5px] font-semibold text-rose-700 leading-snug line-clamp-2 mt-0.5">Conflito com: {conflictNames}</p>}
+            <h4 className={cn('text-[13.5px] font-extrabold leading-tight break-words', compact ? (height >= 90 ? 'line-clamp-4' : height >= 64 ? 'line-clamp-3' : 'line-clamp-2') : height >= 80 ? 'line-clamp-2' : 'truncate', apt.status === 'cancelled' && 'line-through')}>{apt.patient}</h4>
+            {(!compact || height >= 90) && <p className="text-[11.5px] opacity-75 leading-tight truncate">{subtitle}</p>}
+            {hasConflict && height >= 90 && !compact && <p className="text-[10.5px] font-semibold text-rose-700 leading-snug line-clamp-2 mt-0.5">Conflito com: {conflictNames}</p>}
             {showPro && apt.professional && height >= 90 && !compact && <p className="mt-auto text-[10.5px] opacity-70 truncate">{apt.professional}</p>}
           </div>
           <span className="shrink-0 mt-0.5">{icon}</span>
@@ -325,10 +325,10 @@ export default function AppointmentsCalendar() {
   const [searchTerm, setSearchTerm] = useState('');
   // Profissionais marcados na lateral (null = todos). Persistido; a primeira escolha ainda é automática.
   const [checkedProfs, setCheckedProfs] = useState<string[] | null>(() => {
-    try { const v = localStorage.getItem('crm_agenda_profs'); return v ? JSON.parse(v) : null; } catch { return null; }
+    try { const v = localStorage.getItem('crm_agenda_profs_v2'); return v ? JSON.parse(v) : null; } catch { return null; }
   });
-  const profsTouchedRef = useRef((() => { try { return localStorage.getItem('crm_agenda_profs') !== null; } catch { return false; } })());
-  useEffect(() => { try { localStorage.setItem('crm_agenda_profs', JSON.stringify(checkedProfs)); } catch {} }, [checkedProfs]);
+  const profsTouchedRef = useRef((() => { try { return localStorage.getItem('crm_agenda_profs_v2') !== null; } catch { return false; } })());
+  useEffect(() => { try { localStorage.setItem('crm_agenda_profs_v2', JSON.stringify(checkedProfs)); } catch {} }, [checkedProfs]);
   const selectedProfessional = checkedProfs === null ? 'Todos' : checkedProfs.length === 1 ? checkedProfs[0] : 'Vários';
   const isChecked = (name?: string) => checkedProfs === null || checkedProfs.includes(name || '');
   /** Mantém a assinatura antiga: um nome seleciona só ele, 'Todos' seleciona todos. */
