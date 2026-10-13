@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, Check, ChevronLeft, ChevronRight, Clock, Filter, Home, MessageCircle, PanelLeft, Plus, Search, User, X, XCircle
+  AlertTriangle, Check, ChevronLeft, ChevronRight, Clock, Home, MessageCircle, Plus, Search, User, X, XCircle
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { cn } from '../../lib/utils';
@@ -100,19 +100,19 @@ function AptCard({ apt, top, height, left, width, narrow, conflict, onOpen }: {
     >
       {height < 40 ? (
         <div className="flex items-center gap-1.5 h-full pr-5">
-          <span className="text-[12.5px] font-bold leading-tight line-clamp-2 break-words">{apt.patient}</span>
+          <span className="text-[12.5px] font-bold whitespace-nowrap overflow-hidden text-ellipsis">{apt.patient}</span>
           {!narrow && <span className="text-[11px] font-medium opacity-75 shrink-0">{apt.time}</span>}
-          <span className="absolute right-1.5 top-1/2 -translate-y-1/2"><StatusIcon apt={apt} conflict={conflict} /></span>
+          <span className="absolute right-1 top-1/2 -translate-y-1/2"><StatusIcon apt={apt} conflict={conflict} /></span>
         </div>
       ) : (
-        <div className="flex items-start gap-1.5 h-full pr-5">
+        <div className="flex items-start gap-1.5 h-full">
           {!narrow && <User size={15} className="shrink-0 mt-[19px] opacity-80" />}
-          <div className="min-w-0 flex-1 flex flex-col">
-            <span className="text-[11px] font-medium opacity-80 leading-tight truncate">{narrow ? apt.time : `${apt.time} – ${end}`}</span>
-            <span className={cn('font-extrabold leading-tight break-words', narrow ? 'text-[13px]' : 'text-[14px]', height >= 90 ? 'line-clamp-4' : height >= 64 ? 'line-clamp-3' : 'line-clamp-2', cancelled && 'line-through')}>{apt.patient}</span>
-            {height >= 56 && sub && <span className="text-[11.5px] opacity-75 leading-tight truncate">{sub}</span>}
+          <div className="min-w-0 flex-1 flex flex-col pr-4">
+            <span className="text-[11px] font-medium opacity-80 leading-tight whitespace-nowrap">{narrow ? apt.time : `${apt.time} – ${end}`}</span>
+            <span className={cn('font-extrabold leading-tight whitespace-nowrap overflow-hidden text-ellipsis', narrow ? 'text-[12.5px]' : 'text-[14px]', cancelled && 'line-through')}>{apt.patient}</span>
+            {height >= 56 && sub && <span className="text-[11.5px] opacity-75 leading-tight whitespace-nowrap overflow-hidden text-ellipsis">{sub}</span>}
           </div>
-          <span className="absolute right-1.5 top-1.5"><StatusIcon apt={apt} conflict={conflict} /></span>
+          <span className="absolute right-1 top-1"><StatusIcon apt={apt} conflict={conflict} /></span>
         </div>
       )}
     </button>
@@ -132,7 +132,6 @@ export default function AgendaPage() {
   const [search, setSearch] = useState('');
   const [pro, setPro] = useState<string | null>(() => { try { return localStorage.getItem('crm_agenda_pro_v3'); } catch { return null; } });
   const [statusFilter, setStatusFilter] = useState('Todos');
-  const [filtersOpen, setFiltersOpen] = useState(false);
   const [detail, setDetail] = useState<Apt | null>(null);
   const [schedule, setSchedule] = useState<{ date?: string; time?: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -226,12 +225,11 @@ export default function AgendaPage() {
   const field = 'px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200';
 
   return (
-    <div className="flex flex-col gap-4 max-w-[1700px] mx-auto" style={{ height: 'calc(100vh - 130px)', minHeight: 560 }}>
+    <div className="flex flex-col gap-2 h-full w-full" style={{ minHeight: 520 }}>
       {/* Cabeçalho */}
-      <div className="shrink-0 flex flex-wrap items-center gap-3 px-5 py-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-        <div className="mr-2 leading-tight">
-          <h1 className="text-xl font-extrabold text-slate-900 dark:text-white">Agenda</h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400">Consultas e Procedimentos</p>
+      <div className="shrink-0 flex flex-wrap items-center gap-3 px-4 py-2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+        <div className="mr-1 leading-tight">
+          <h1 className="text-lg font-extrabold text-slate-900 dark:text-white">Agenda</h1>
         </div>
         <button onClick={() => setDate(new Date())} className={cn(field, 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700')}>Hoje</button>
         <div className="flex items-center rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
@@ -249,36 +247,10 @@ export default function AgendaPage() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar paciente..." className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs outline-none focus:ring-2 focus:ring-violet-500 dark:text-white" />
         </div>
-        <div className="relative">
-          <button onClick={() => setFiltersOpen(o => !o)} className={cn(field, 'flex items-center gap-2 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700')}>
-            <Filter size={14} /> Filtros
-            {(statusFilter !== 'Todos' || activePro !== (professionals.find(isMain) ?? 'Todos')) && <span className="w-2 h-2 rounded-full bg-violet-500" />}
-          </button>
-          {filtersOpen && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setFiltersOpen(false)} />
-              <div className="absolute right-0 mt-2 w-64 z-50 p-3 space-y-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl text-xs">
-                <label className="block space-y-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Profissional</span>
-                  <select value={activePro} onChange={e => setPro(e.target.value)} className="w-full px-2.5 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 dark:text-white outline-none">
-                    <option value="Todos">Todos</option>
-                    {professionals.map(p => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Status</span>
-                  <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="w-full px-2.5 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 dark:text-white outline-none">
-                    <option value="Todos">Todos</option>
-                    <option value="confirmed">Confirmado</option>
-                    <option value="attended">Atendido</option>
-                    <option value="pending">Pendente</option>
-                    <option value="missed">Faltou</option>
-                  </select>
-                </label>
-              </div>
-            </>
-          )}
-        </div>
+        <select value={activePro} onChange={e => setPro(e.target.value)} title="Profissional" className={cn(field, 'max-w-[190px] outline-none cursor-pointer')}>
+          <option value="Todos">Todos os profissionais</option>
+          {professionals.map(p => <option key={p} value={p}>{p}</option>)}
+        </select>
         <button onClick={() => setSchedule({})} className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-sm font-bold shadow-md cursor-pointer">
           <Plus size={16} /> Novo agendamento
         </button>
@@ -435,16 +407,17 @@ export default function AgendaPage() {
         })()}
       </div>
 
-      {/* Legenda */}
-      <div className="shrink-0 flex flex-wrap items-center gap-x-6 gap-y-2 px-5 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-300">
+      {/* Legenda: os status também filtram */}
+      <div className="shrink-0 flex flex-wrap items-center gap-x-5 gap-y-1 px-4 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11.5px] text-slate-600 dark:text-slate-300">
         {(Object.keys(TYPES) as TypeKey[]).map(k => (
-          <span key={k} className="flex items-center gap-2"><span className="w-4 h-4 rounded-full" style={{ background: TYPES[k].color }} />{TYPES[k].label}</span>
+          <span key={k} className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded-full" style={{ background: TYPES[k].color }} />{TYPES[k].label}</span>
         ))}
-        <span className="hidden sm:block w-px h-5 bg-slate-200 dark:bg-slate-700" />
-        <span className="flex items-center gap-2"><Check size={16} className="text-emerald-600" strokeWidth={3} />Confirmado</span>
-        <span className="flex items-center gap-2"><Clock size={16} className="text-amber-500" />Pendente</span>
-        <span className="flex items-center gap-2"><AlertTriangle size={16} className="text-rose-500" />Conflito</span>
-        <span className="flex items-center gap-2"><XCircle size={16} className="text-rose-500" />Cancelado / Faltou</span>
+        <span className="hidden sm:block w-px h-4 bg-slate-200 dark:bg-slate-700" />
+        {([['confirmed', 'Confirmado', <Check key="c" size={15} className="text-emerald-600" strokeWidth={3} />], ['pending', 'Pendente', <Clock key="p" size={15} className="text-amber-500" />], ['missed', 'Cancelado / Faltou', <XCircle key="m" size={15} className="text-rose-500" />]] as [string, string, React.ReactNode][]).map(([k, l, ic]) => (
+          <button key={k} onClick={() => setStatusFilter(statusFilter === k ? 'Todos' : k)} title="Clique para filtrar" className={cn('flex items-center gap-1.5 px-2 py-0.5 rounded-md cursor-pointer', statusFilter === k ? 'bg-violet-600/20 ring-1 ring-violet-500 font-bold' : 'hover:bg-slate-100 dark:hover:bg-slate-800')}>{ic}{l}</button>
+        ))}
+        <span className="flex items-center gap-1.5"><AlertTriangle size={15} className="text-rose-500" />Conflito</span>
+        {statusFilter !== 'Todos' && <button onClick={() => setStatusFilter('Todos')} className="ml-auto text-[11px] font-bold text-violet-500 hover:underline cursor-pointer">Limpar filtro</button>}
       </div>
 
       {/* Detalhe */}

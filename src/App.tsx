@@ -150,7 +150,7 @@ export default function App() {
         )}
 
         {/* Dynamic Content Workspace */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 pb-24 sm:pb-8 relative z-10 custom-scrollbar">
+        <div className={cn("flex-1 min-h-0 overflow-y-auto relative z-10 custom-scrollbar", activeTab === 'agenda' ? "p-2 md:p-3 pb-20 sm:pb-3" : "p-4 md:p-8 pb-24 sm:pb-8")}>
           <Suspense fallback={<div className="h-64 flex items-center justify-center"><div className="animate-spin rounded-full h-7 w-7 border-b-2 border-[var(--color-primary-blue)]" /></div>}>
           <AnimatePresence mode="wait">
             {activeTab === 'dashboard' ? (
@@ -228,6 +228,7 @@ export default function App() {
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.99 }}
                   transition={{ duration: 0.18 }}
+                  className="h-full"
                 >
                   <AgendaPage />
                 </motion.div>
