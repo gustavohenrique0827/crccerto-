@@ -1,16 +1,16 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
-import { 
-  ChevronLeft, 
-  ChevronRight, 
-  Clock, 
-  User, 
-  Plus, 
-  Building2, 
-  Download, 
-  MoreVertical, 
-  Search, 
-  CheckCircle2, 
-  AlertCircle, 
+import {
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  User,
+  Plus,
+  Building2,
+  Download,
+  MoreVertical,
+  Search,
+  CheckCircle2,
+  AlertCircle,
   Stethoscope,
   RotateCw,
   RotateCcw,
@@ -24,7 +24,10 @@ import {
   AlertTriangle,
   Wifi,
   WifiOff,
-  LogOut
+  LogOut,
+  MoreHorizontal,
+  SlidersHorizontal,
+  ChevronDown
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Role } from '../../types';
@@ -296,11 +299,20 @@ const STATUS_CONFIG: Record<AppointmentStatusType, { label: string; color: strin
 export default function AppointmentsCalendar() {
   const { currentClinicId, setCurrentClinicId, currentClinic, isAllClinicsView, clinics, user, addToast } = useApp();
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [viewMode, setViewMode] = useState<'day' | 'week' | 'list' | 'month' | 'custom'>('week');
+  const [viewMode, setViewMode] = useState<'day' | 'week' | 'list' | 'month' | 'custom'>(() => {
+    try {
+      const v = localStorage.getItem('crm_agenda_view');
+      return v === 'day' || v === 'week' || v === 'list' || v === 'month' || v === 'custom' ? v : 'week';
+    } catch { return 'week'; }
+  });
+  useEffect(() => { try { localStorage.setItem('crm_agenda_view', viewMode); } catch {} }, [viewMode]);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [selectedSlotForSchedule, setSelectedSlotForSchedule] = useState<{ date: string; time: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedProfessional, setSelectedProfessional] = useState<string>('Todos');
+  const [selectedProfessional, setSelectedProfessional] = useState<string>(() => {
+    try { return localStorage.getItem('crm_agenda_professional') || 'Todos'; } catch { return 'Todos'; }
+  });
+  useEffect(() => { try { localStorage.setItem('crm_agenda_professional', selectedProfessional); } catch {} }, [selectedProfessional]);
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>('Todos');
   const [selectedTag, setSelectedTag] = useState<string>('Todas');
   const [selectedAppointmentDetail, setSelectedAppointmentDetail] = useState<Appointment | null>(null);
@@ -925,7 +937,7 @@ export default function AppointmentsCalendar() {
 
   // Na primeira vez que a semana abre com vários profissionais, começa por um deles (agenda legível);
   // "Todos os profissionais" continua a um clique.
-  const autoPickedRef = useRef(false);
+  const autoPickedRef = useRef((() => { try { return localStorage.getItem('crm_agenda_professional') !== null; } catch { return false; } })());
 
   // Profissionais cadastrados na(s) clínica(s) + quem já aparece em agendamentos
   const [dbProfessionalNames, setDbProfessionalNames] = useState<string[]>([]);
@@ -1019,6 +1031,27 @@ export default function AppointmentsCalendar() {
     return days;
   }, [selectedDate]);
 
+  // Avançar/voltar o período exibido, conforme o modo de visão
+  const shiftRange = (dir: -1 | 1) => {
+    if (viewMode === 'custom') {
+      const s = new Date(customStartDate + 'T00:00:00');
+      const e = new Date(customEndDate + 'T00:00:00');
+      const diffDays = Math.max(1, Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)));
+      s.setDate(s.getDate() + dir * diffDays);
+      e.setDate(e.getDate() + dir * diffDays);
+      setCustomStartDate(formatDateStr(s));
+      setCustomEndDate(formatDateStr(e));
+      return;
+    }
+    const d = new Date(selectedDate);
+    if (viewMode === 'day') d.setDate(d.getDate() + dir);
+    else if (viewMode === 'week' || viewMode === 'list') d.setDate(d.getDate() + dir * 7);
+    else d.setMonth(d.getMonth() + dir);
+    setSelectedDate(d);
+  };
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
   // Com um profissional selecionado (ou na visão de dia) cada hora ganha mais altura: os cards ficam legíveis
   const HOUR_PX = viewMode === 'week' && selectedProfessional === 'Todos' ? HOUR_PX_DEFAULT : HOUR_PX_FOCUS;
 
@@ -1034,251 +1067,147 @@ export default function AppointmentsCalendar() {
 
   return (
     <div className="h-full flex flex-col space-y-4 max-w-[1700px] mx-auto">
-      {/* Top Clinicorp-Style Bar */}
-      <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col gap-3 shrink-0">
-        {/* Linha 1: navegação de data à esquerda, modo de exibição à direita */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3 flex-wrap">
-          {/* Hoje button */}
-          <button
-            onClick={handleJumpToToday}
-            className="px-3.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition-all border border-slate-200 dark:border-slate-700 shadow-2xs active:scale-95"
-          >
-            Hoje
-          </button>
-
-          {/* Date Range Navigation */}
-          <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-800/80 px-2 py-1 rounded-xl border border-slate-200 dark:border-slate-700">
-            <button 
-              onClick={() => {
-                if (viewMode === 'custom') {
-                  const s = new Date(customStartDate + 'T00:00:00');
-                  const e = new Date(customEndDate + 'T00:00:00');
-                  const diffDays = Math.max(1, Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)));
-                  s.setDate(s.getDate() - diffDays);
-                  e.setDate(e.getDate() - diffDays);
-                  setCustomStartDate(formatDateStr(s));
-                  setCustomEndDate(formatDateStr(e));
-                  return;
-                }
-                const d = new Date(selectedDate);
-                if (viewMode === 'day') d.setDate(d.getDate() - 1);
-                else if (viewMode === 'week' || viewMode === 'list') d.setDate(d.getDate() - 7);
-                else d.setMonth(d.getMonth() - 1);
-                setSelectedDate(d);
-              }}
-              className="p-1 hover:bg-white dark:hover:bg-slate-700 rounded-lg text-slate-500 dark:text-slate-400 transition-colors"
-            >
-              <ChevronLeft size={16} />
-            </button>
-            <span className="text-xs font-bold text-slate-800 dark:text-white px-2 uppercase tracking-wide">
-              {viewMode === 'day' && selectedDate.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'long', year: 'numeric' })}
-              {(viewMode === 'week' || viewMode === 'list') && `De ${weekDays[0].getDate()} de ${weekDays[0].toLocaleDateString('pt-BR', { month: 'short' })} a ${weekDays[6].getDate()} de ${weekDays[6].toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' })}`}
-              {viewMode === 'month' && selectedDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
-              {viewMode === 'custom' && `${new Date(customStartDate + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })} a ${new Date(customEndDate + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' })}`}
-            </span>
-            <button 
-              onClick={() => {
-                if (viewMode === 'custom') {
-                  const s = new Date(customStartDate + 'T00:00:00');
-                  const e = new Date(customEndDate + 'T00:00:00');
-                  const diffDays = Math.max(1, Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)));
-                  s.setDate(s.getDate() + diffDays);
-                  e.setDate(e.getDate() + diffDays);
-                  setCustomStartDate(formatDateStr(s));
-                  setCustomEndDate(formatDateStr(e));
-                  return;
-                }
-                const d = new Date(selectedDate);
-                if (viewMode === 'day') d.setDate(d.getDate() + 1);
-                else if (viewMode === 'week' || viewMode === 'list') d.setDate(d.getDate() + 7);
-                else d.setMonth(d.getMonth() + 1);
-                setSelectedDate(d);
-              }}
-              className="p-1 hover:bg-white dark:hover:bg-slate-700 rounded-lg text-slate-500 dark:text-slate-400 transition-colors"
-            >
-              <ChevronRight size={16} />
-            </button>
-          </div>
-
-          <button 
-            onClick={() => addToast('Agenda atualizada em tempo real', 'info')}
-            title="Atualizar Agenda"
-            className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-xl transition-colors border border-slate-200 dark:border-slate-700"
-          >
-            <RotateCw size={14} />
-          </button>
-
-          </div>
-
-          <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-            {(['day', 'week', 'list', 'month', 'custom'] as const).map((mode) => (
-              <button
-                key={mode}
-                onClick={() => setViewMode(mode)}
-                className={cn(
-                  "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all",
-                  viewMode === mode 
-                    ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm" 
-                    : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-                )}
-              >
-                {mode === 'day' ? 'Dia' : mode === 'week' ? 'Semana' : mode === 'list' ? 'Lista' : mode === 'month' ? 'Mês' : 'Personalizado'}
-              </button>
-            ))}
-          </div>
-
+      {/* Barra da agenda: uma linha só; o que é secundário fica nos menus Filtros e Mais */}
+      <div className="bg-white dark:bg-slate-900 px-3 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-wrap items-center gap-2 shrink-0">
+        {/* Navegação de data */}
+        <button onClick={handleJumpToToday} className="px-3 py-1.5 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 cursor-pointer">
+          Hoje
+        </button>
+        <div className="flex items-center rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60">
+          <button onClick={() => shiftRange(-1)} aria-label="Período anterior" className="p-1.5 text-slate-500 hover:text-slate-800 dark:hover:text-white cursor-pointer"><ChevronLeft size={16} /></button>
+          <span className="text-xs font-bold text-slate-800 dark:text-white px-1.5 uppercase tracking-wide whitespace-nowrap">
+            {viewMode === 'day' && selectedDate.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'long', year: 'numeric' })}
+            {(viewMode === 'week' || viewMode === 'list') && `${weekDays[0].getDate()} ${weekDays[0].toLocaleDateString('pt-BR', { month: 'short' })} – ${weekDays[6].getDate()} ${weekDays[6].toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' })}`}
+            {viewMode === 'month' && selectedDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+            {viewMode === 'custom' && `${new Date(customStartDate + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })} – ${new Date(customEndDate + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' })}`}
+          </span>
+          <button onClick={() => shiftRange(1)} aria-label="Próximo período" className="p-1.5 text-slate-500 hover:text-slate-800 dark:hover:text-white cursor-pointer"><ChevronRight size={16} /></button>
         </div>
 
-        {/* Linha 2: busca à esquerda; alertas, Google, exportar e Agendar à direita */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
-          {/* Search bar */}
-          <div className="relative w-full sm:w-72 md:w-80">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
-            <input 
-              type="text" 
-              placeholder="Buscar pacientes..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 outline-none w-full transition-all dark:text-white"
-            />
-          </div>
-
-          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-          {tagOptions.length > 0 && (
-            <select
-              value={selectedTag}
-              onChange={e => setSelectedTag(e.target.value)}
-              title="Filtrar pela etiqueta do Clinicorp"
-              className="px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 outline-none cursor-pointer"
-            >
-              <option value="Todas">Todas as etiquetas</option>
-              {tagOptions.map(t => <option key={t.name} value={t.name}>{t.name} ({t.n})</option>)}
-            </select>
-          )}
-          {/* Visual Conflict Summary Badge */}
-          {visibleConflicts > 0 && (
-            <div 
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 rounded-xl border border-rose-200 dark:border-rose-800 text-xs font-bold shadow-xs animate-pulse"
-              title="Existem agendamentos sobrepostos ou no mesmo horário para o mesmo profissional/unidade"
-            >
-              <AlertTriangle size={14} className="text-rose-600 shrink-0" />
-              <span>{visibleConflicts} Conflito{visibleConflicts > 1 ? 's' : ''} neste período</span>
-            </div>
-          )}
-
-          {/* Google Calendar Sync Button & Quick Pull */}
-          <div className="flex items-center gap-1.5">
+        {/* Modo de exibição */}
+        <div className="flex bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl">
+          {(['day', 'week', 'list', 'month', 'custom'] as const).map((mode) => (
             <button
-              onClick={() => setShowGoogleSyncModal(true)}
-              title="Configurações e Integração do Google Calendar"
+              key={mode}
+              onClick={() => setViewMode(mode)}
               className={cn(
-                "px-3 py-1.5 rounded-xl border text-xs font-bold transition-all flex items-center gap-2 shadow-xs cursor-pointer",
-                googleUser && googleAccessToken
-                  ? "bg-emerald-50/80 hover:bg-emerald-100/80 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/50 border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300"
-                  : googleUser && !googleAccessToken
-                  ? "bg-amber-50/80 hover:bg-amber-100/80 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-200"
-                  : "bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200"
+                "px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer",
+                viewMode === mode ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm" : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
               )}
             >
-              <svg className="w-4 h-4 shrink-0" viewBox="0 0 48 48">
-                <path fill="#4285F4" d="M38 44H10c-3.3 0-6-2.7-6-6V10c0-3.3 2.7-6 6-6h28c3.3 0 6 2.7 6 6v28c0 3.3-2.7 6-6 6z"/>
-                <path fill="#FFF" d="M35 14H13c-1.1 0-2 .9-2 2v20c0 1.1.9 2 2 2h22c1.1 0 2-.9 2-2V16c0-1.1-.9-2-2-2zm-9 19h-8v-3h8v3zm8-6H14v-3h20v3zm0-6H14v-3h20v3z"/>
-                <path fill="#EA4335" d="M35 10V6c0-.6-.4-1-1-1s-1 .4-1 1v4h-6V6c0-.6-.4-1-1-1s-1 .4-1 1v4h-6V6c0-.6-.4-1-1-1s-1 .4-1 1v4h-5c-2.2 0-4 1.8-4 4v2h34v-2c0-2.2-1.8-4-4-4h-5z"/>
-              </svg>
-              <span className="hidden sm:inline">
-                {isPullingGoogleEvents
-                  ? 'Sincronizando Google...'
-                  : googleUser && googleAccessToken
-                  ? 'Google Calendar Conectado'
-                  : googleUser && !googleAccessToken
-                  ? 'Renovar Google Agenda'
-                  : 'Conectar Google'}
-              </span>
-              {googleUser && googleAccessToken && (
-                <span className={cn("w-2 h-2 rounded-full", isPullingGoogleEvents ? "bg-blue-500 animate-spin" : "bg-emerald-500 animate-pulse")}></span>
-              )}
-              {googleUser && !googleAccessToken && (
-                <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-              )}
+              {mode === 'day' ? 'Dia' : mode === 'week' ? 'Semana' : mode === 'list' ? 'Lista' : mode === 'month' ? 'Mês' : 'Período'}
             </button>
-
-            {googleUser && googleAccessToken && (
-              <>
-                <button
-                  onClick={() => syncGoogleCalendarToCrm(undefined, true)}
-                  disabled={isPullingGoogleEvents}
-                  title="Sincronizar e puxar eventos do Google Calendar agora"
-                  className="p-1.5 px-2.5 bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/50 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer disabled:opacity-50"
-                >
-                  <RotateCw size={13} className={isPullingGoogleEvents ? "animate-spin text-blue-600" : "text-blue-600"} />
-                  <span className="hidden md:inline">{isPullingGoogleEvents ? 'Buscando...' : 'Puxar do Google'}</span>
-                </button>
-                <button
-                  onClick={handleQuickDisconnect}
-                  title="Desconectar do Google Agenda e remover os eventos do calendário"
-                  className="p-1.5 px-2.5 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/50 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
-                >
-                  <LogOut size={13} className="text-rose-600 dark:text-rose-400" />
-                  <span className="hidden md:inline">Desconectar</span>
-                </button>
-              </>
-            )}
-
-            {googleUser && !googleAccessToken && (
-              <>
-                <button
-                  onClick={handleQuickRenew}
-                  title="Reconectar e renovar token do Google Calendar"
-                  className="p-1.5 px-2.5 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/50 border border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
-                >
-                  <RotateCw size={13} className="text-amber-600 dark:text-amber-400" />
-                  <span className="hidden md:inline">Reconectar</span>
-                </button>
-                <button
-                  onClick={handleQuickDisconnect}
-                  title="Desconectar do Google Agenda e remover os eventos do calendário"
-                  className="p-1.5 px-2.5 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/50 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
-                >
-                  <LogOut size={13} className="text-rose-600 dark:text-rose-400" />
-                  <span className="hidden md:inline">Desconectar</span>
-                </button>
-              </>
-            )}
-          </div>
-
-          {/* Local Sync Queue Indicator Button */}
-          {syncQueue.length > 0 && (
-            <button
-              onClick={() => setShowQueueModal(true)}
-              title={`${syncQueue.length} agendamento(s) aguardando reenvio automático ao Google Calendar`}
-              className="px-3 py-1.5 rounded-xl border border-amber-300 dark:border-amber-700/80 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 text-amber-800 dark:text-amber-200 text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer animate-pulse"
-            >
-              <Clock size={13} className="text-amber-600 dark:text-amber-400 shrink-0" />
-              <span>{syncQueue.length} na Fila</span>
-            </button>
-          )}
-
-          <button 
-            onClick={handleExport}
-            title="Exportar CSV"
-            className="p-2 text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transition-colors"
-          >
-            <Download size={16} />
-          </button>
-
-          <button 
-            onClick={() => {
-              setSelectedSlotForSchedule(null);
-              setShowScheduleModal(true);
-            }}
-            className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-md shadow-blue-200 dark:shadow-none hover:bg-blue-700 transition-all flex items-center gap-1.5 uppercase tracking-wider"
-          >
-            <Plus size={16} />
-            <span>Agendar</span>
-          </button>
-          </div>
+          ))}
         </div>
+
+        <div className="flex-1 min-w-[8px]" />
+
+        {/* Busca */}
+        <div className="relative w-44 xl:w-60">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
+          <input
+            type="text"
+            placeholder="Buscar paciente"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-8 pr-2.5 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 outline-none w-full dark:text-white"
+          />
+        </div>
+
+        {/* Conflitos do período (só aparece quando existem) */}
+        {visibleConflicts > 0 && (
+          <span
+            className="flex items-center gap-1 px-2 py-1.5 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-xs font-bold"
+            title={`${visibleConflicts} agendamento(s) com horário sobreposto para o mesmo profissional neste período`}
+          >
+            <AlertTriangle size={13} />{visibleConflicts}
+          </span>
+        )}
+
+        {/* Filtros */}
+        <div className="relative">
+          <button
+            onClick={() => { setFiltersOpen(o => !o); setMoreOpen(false); }}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold cursor-pointer",
+              selectedTag !== 'Todas' ? "border-blue-400 text-blue-700 bg-blue-50 dark:bg-blue-950/40 dark:text-blue-300" : "border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800"
+            )}
+          >
+            <SlidersHorizontal size={13} />
+            Filtros
+            {selectedTag !== 'Todas' && <span className="w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center">1</span>}
+          </button>
+          {filtersOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setFiltersOpen(false)} />
+              <div className="absolute right-0 mt-2 w-64 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl p-3 space-y-3 text-xs">
+                <label className="block space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Etiqueta do Clinicorp</span>
+                  <select value={selectedTag} onChange={e => setSelectedTag(e.target.value)} className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg outline-none dark:text-white">
+                    <option value="Todas">Todas</option>
+                    {tagOptions.map(t => <option key={t.name} value={t.name}>{t.name} ({t.n})</option>)}
+                  </select>
+                  {tagOptions.length === 0 && <span className="text-[10px] text-slate-400">Sem etiquetas ainda: rode a migration e sincronize com o Clinicorp.</span>}
+                </label>
+                {selectedTag !== 'Todas' && (
+                  <button onClick={() => setSelectedTag('Todas')} className="text-[11px] font-bold text-blue-600 hover:underline cursor-pointer">Limpar filtros</button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Mais: Google, fila, exportar */}
+        <div className="relative">
+          <button
+            onClick={() => { setMoreOpen(o => !o); setFiltersOpen(false); }}
+            aria-label="Mais opções"
+            className="relative p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer"
+          >
+            <MoreHorizontal size={16} />
+            {(syncQueue.length > 0 || (googleUser && !googleAccessToken)) && <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-amber-500 border-2 border-white dark:border-slate-900" />}
+          </button>
+          {moreOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setMoreOpen(false)} />
+              <div className="absolute right-0 mt-2 w-72 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl p-1.5 text-xs">
+                <p className="px-2.5 pt-1.5 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">Google Agenda</p>
+                <button onClick={() => { setShowGoogleSyncModal(true); setMoreOpen(false); }} className="w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold text-slate-700 dark:text-slate-200 cursor-pointer">
+                  <span>{googleUser && googleAccessToken ? 'Conectado — configurar' : googleUser ? 'Renovar conexão' : 'Conectar'}</span>
+                  <span className={cn("w-2 h-2 rounded-full", googleUser && googleAccessToken ? "bg-emerald-500" : googleUser ? "bg-amber-500" : "bg-slate-300")} />
+                </button>
+                {googleUser && googleAccessToken && (
+                  <>
+                    <button disabled={isPullingGoogleEvents} onClick={() => { syncGoogleCalendarToCrm(undefined, true); setMoreOpen(false); }} className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold text-slate-700 dark:text-slate-200 cursor-pointer disabled:opacity-50">
+                      {isPullingGoogleEvents ? 'Buscando...' : 'Puxar eventos do Google agora'}
+                    </button>
+                    <button onClick={() => { handleQuickDisconnect(); setMoreOpen(false); }} className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/30 font-semibold text-rose-600 cursor-pointer">Desconectar</button>
+                  </>
+                )}
+                {googleUser && !googleAccessToken && (
+                  <button onClick={() => { handleQuickRenew(); setMoreOpen(false); }} className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/30 font-semibold text-amber-700 cursor-pointer">Reconectar agora</button>
+                )}
+                {syncQueue.length > 0 && (
+                  <button onClick={() => { setShowQueueModal(true); setMoreOpen(false); }} className="w-full flex items-center justify-between px-2.5 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold text-amber-700 cursor-pointer">
+                    <span>Fila de envio ao Google</span><span className="font-black">{syncQueue.length}</span>
+                  </button>
+                )}
+                <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+                <button onClick={() => { handleExport(); setMoreOpen(false); }} className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold text-slate-700 dark:text-slate-200 cursor-pointer">
+                  <Download size={14} />Exportar agenda (CSV)
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
+        <button
+          onClick={() => { setSelectedSlotForSchedule(null); setShowScheduleModal(true); }}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold uppercase tracking-wider shadow-md shadow-blue-200 dark:shadow-none cursor-pointer"
+        >
+          <Plus size={15} />
+          Agendar
+        </button>
       </div>
 
       {/* Google Calendar Sync Loading Component */}

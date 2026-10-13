@@ -538,10 +538,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [user]);
 
   // Navigation State
-  const [activeTab, setActiveTabState] = useState('dashboard');
+  // A página atual sobrevive ao recarregar (F5): volta para onde você estava
+  const [activeTab, setActiveTabState] = useState<string>(() => {
+    try { return localStorage.getItem('crm_active_tab') || 'dashboard'; } catch { return 'dashboard'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('crm_active_tab', activeTab); } catch {}
+  }, [activeTab]);
   const [subPage, setSubPageState] = useState<string | null>(null);
   const [subPageData, setSubPageData] = useState<any>(null);
-  const [navigationHistory, setNavigationHistory] = useState<string[]>(['dashboard']);
+  const [navigationHistory, setNavigationHistory] = useState<string[]>(() => [activeTab]);
 
   const setActiveTab = useCallback((tab: string) => {
     setActiveTabState(tab);
