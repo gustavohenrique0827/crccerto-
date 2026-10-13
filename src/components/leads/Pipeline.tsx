@@ -42,7 +42,7 @@ import KanbanCard from './KanbanCard';
 import { cn } from '@/src/lib/utils';
 import { exportToCSV } from '../../lib/exportUtils';
 import { useApp } from '../../context/AppContext';
-import { useSupabaseLeads, localDay } from '../../lib/supabase';
+import { useSupabaseLeads, localDay, businessDay } from '../../lib/supabase';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
@@ -234,7 +234,8 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
     const matchesSource = selectedSourceFilter === 'all' || lead.sourceId === selectedSourceFilter;
     const matchesOwner = ownerFilter === 'all' || (ownerFilter === '__none' ? !lead.responsibleName : lead.responsibleName === ownerFilter);
 
-    const day = localDay(String((lead as any)[dateField] || lead.createdAt || ''));
+    const rawDay = String((lead as any)[dateField] || lead.createdAt || '');
+    const day = dateField === 'createdAt' ? businessDay(rawDay) : localDay(rawDay);
     const matchesDate = (!dateFrom || (day && day >= dateFrom)) && (!dateTo || (day && day <= dateTo));
 
     const value = Number(lead.estimatedValue || 0);
@@ -569,7 +570,7 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
                       <div className="flex items-center justify-between">
                         <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Período</label>
                         <select value={dateField} onChange={(e) => setDateField(e.target.value as any)} className="bg-transparent text-[10px] font-bold text-[var(--color-primary-blue)] outline-none cursor-pointer">
-                          <option value="createdAt">pela data de entrada</option>
+                          <option value="createdAt">pela data de entrada (após 18h30 = dia seguinte)</option>
                           <option value="lastInteractionAt">pela última interação</option>
                         </select>
                       </div>

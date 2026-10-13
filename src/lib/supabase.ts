@@ -1019,13 +1019,21 @@ const dayKey = (offset: number) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-/** Hora limite (horário local) para um contato contar como "lead novo" do dia no dashboard. */
-export const NEW_LEAD_CUTOFF_HOUR = 18;
+/** Depois deste horário (local), o lead conta como do dia seguinte. */
+export const DAY_CUTOFF_MINUTES = 18 * 60 + 30;
+
+/** Dia de atendimento de um lead: chegou às 18h30 ou depois = dia seguinte. */
+export const businessDay = (iso?: string | null): string => {
+  const t = String(iso || '');
+  const d = new Date(t);
+  if (!t || isNaN(d.getTime()) || /^\d{4}-\d{2}-\d{2}$/.test(t)) return localDay(t);
+  if (d.getHours() * 60 + d.getMinutes() >= DAY_CUTOFF_MINUTES) d.setDate(d.getDate() + 1);
+  return localDay(d.toISOString());
+};
 
 /**
- * Leads NOVOS: o contato escreveu primeiro, não é paciente da clínica e chegou dentro do horário de atendimento.
- * Quem a clínica chamou primeiro, pacientes antigos e contatos fora do horário continuam no funil, mas não
- * entram na contagem de "leads novos".
+ * Leads NOVOS: o contato escreveu primeiro e não é paciente da clínica. Quem a clínica chamou primeiro e
+ * pacientes antigos continuam no funil, mas não entram na contagem de "leads novos".
  */
 async function filterNewLeads(leads: Lead[], clinicId?: string): Promise<Lead[]> {
   const sb = getSupabase();
@@ -1059,8 +1067,7 @@ async function filterNewLeads(leads: Lead[], clinicId?: string): Promise<Lead[]>
     if (firstFrom.get(l.id) !== 'mensagem_cliente') return false;
     const k = phoneKey(l.whatsapp || l.phone);
     if (k && patientKeys.has(k)) return false;
-    const hour = new Date(l.createdAt).getHours();
-    return isNaN(hour) || hour < NEW_LEAD_CUTOFF_HOUR;
+    return true;
   });
 }
 
@@ -1122,7 +1129,7 @@ export function useSupabaseDashboardStats(clinicId?: string, range?: string) {
           return !!day && day >= rangeFrom && day <= rangeTo;
         };
         // Leads sem telefone (restos de erros do fluxo) não contam como lead
-        const leads = await filterNewLeads(allLeads.filter(l => inRange(l.createdAt) && phoneKey(l.whatsapp || l.phone)), clinicId);
+        const leads = await filterNewLeads(allLeads.filter(l => inRange(businessDay(l.createdAt)) && phoneKey(l.whatsapp || l.phone)), clinicId);
         const apts = aptsAll.filter(a => inRange(a.appointment_date || a.date));
 
         let followups = 0;
