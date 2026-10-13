@@ -49,6 +49,7 @@ import {
   SyncQueueItem 
 } from '../../lib/syncQueue';
 import { createCalendarEvent, performBidirectionalSync } from '../../lib/googleCalendar';
+import { BOOKING_PROFESSIONAL } from '../../lib/bookingRule';
 import { isSupabaseConfigured, fetchAppointmentsFromDb, saveAppointmentsToDb, fetchProfessionalsFromDb } from '../../lib/supabase';
 import { buildGoogleEventFromAppointment, getCalendarFieldMapping } from '../../lib/googleCalendarMapping';
 import { getGoogleSyncSettings, recordSyncExecution } from '../../lib/googleSyncSettings';
@@ -198,7 +199,7 @@ const STATUS_CONFIG: Record<AppointmentStatusType, { label: string; color: strin
 export default function AppointmentsCalendar() {
   const { currentClinicId, setCurrentClinicId, currentClinic, isAllClinicsView, clinics, user, addToast } = useApp();
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [viewMode, setViewMode] = useState<'day' | 'week' | 'month' | 'custom'>('week');
+  const [viewMode, setViewMode] = useState<'day' | 'week' | 'list' | 'month' | 'custom'>('week');
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [selectedSlotForSchedule, setSelectedSlotForSchedule] = useState<{ date: string; time: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -826,18 +827,23 @@ export default function AppointmentsCalendar() {
     return () => { cancelled = true; };
   }, [effectiveClinicId]);
 
+  const normName = (v?: string) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const isMain = (name?: string) => normName(name).includes(BOOKING_PROFESSIONAL);
+
+  // Bruno (profissional principal) sempre em primeiro
   const professionals = useMemo(() => {
-    return ['Todos', ...new Set([...dbProfessionalNames, ...(clinicAppointments || []).map(a => a.professional).filter(Boolean)])];
+    const all = Array.from(new Set([...dbProfessionalNames, ...(clinicAppointments || []).map(a => a.professional).filter(Boolean)])) as string[];
+    return ['Todos', ...all.sort((x, y) => Number(isMain(y)) - Number(isMain(x)))];
   }, [clinicAppointments, dbProfessionalNames]);
 
+  // Ao abrir, a agenda do profissional principal (Bruno) já vem selecionada; "Todos" fica a um clique
   useEffect(() => {
-    if (autoPickedRef.current || viewMode !== 'week' || selectedProfessional !== 'Todos' || clinicAppointments.length === 0) return;
-    const counts = new Map<string, number>();
-    clinicAppointments.forEach(a => { if (a.professional && a.status !== 'cancelled') counts.set(a.professional, (counts.get(a.professional) || 0) + 1); });
-    if (counts.size < 3) return;
+    if (autoPickedRef.current || selectedProfessional !== 'Todos') return;
+    const main = professionals.find(pn => pn !== 'Todos' && isMain(pn));
+    if (!main) return;
     autoPickedRef.current = true;
-    setSelectedProfessional([...counts.entries()].sort((x, y) => y[1] - x[1])[0][0]);
-  }, [clinicAppointments, viewMode, selectedProfessional]);
+    setSelectedProfessional(main);
+  }, [professionals, selectedProfessional]);
 
   const handleExport = () => {
     exportToCSV(filteredAppointments, 'agendamentos_agenda');
@@ -906,7 +912,7 @@ export default function AppointmentsCalendar() {
   // Conflitos só do período que está na tela (e sem contar cancelados)
   const [rangeStart, rangeEnd] =
     viewMode === 'day' ? [formatDateStr(selectedDate), formatDateStr(selectedDate)]
-    : viewMode === 'week' ? [formatDateStr(weekDays[0]), formatDateStr(weekDays[6])]
+    : (viewMode === 'week' || viewMode === 'list') ? [formatDateStr(weekDays[0]), formatDateStr(weekDays[6])]
     : viewMode === 'month' ? [formatDateStr(monthDays[0].date), formatDateStr(monthDays[monthDays.length - 1].date)]
     : [customStartDate, customEndDate];
   const visibleConflicts = filteredAppointments.filter(
@@ -944,7 +950,7 @@ export default function AppointmentsCalendar() {
                 }
                 const d = new Date(selectedDate);
                 if (viewMode === 'day') d.setDate(d.getDate() - 1);
-                else if (viewMode === 'week') d.setDate(d.getDate() - 7);
+                else if (viewMode === 'week' || viewMode === 'list') d.setDate(d.getDate() - 7);
                 else d.setMonth(d.getMonth() - 1);
                 setSelectedDate(d);
               }}
@@ -954,7 +960,7 @@ export default function AppointmentsCalendar() {
             </button>
             <span className="text-xs font-bold text-slate-800 dark:text-white px-2 uppercase tracking-wide">
               {viewMode === 'day' && selectedDate.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'long', year: 'numeric' })}
-              {viewMode === 'week' && `De ${weekDays[0].getDate()} de ${weekDays[0].toLocaleDateString('pt-BR', { month: 'short' })} a ${weekDays[6].getDate()} de ${weekDays[6].toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' })}`}
+              {(viewMode === 'week' || viewMode === 'list') && `De ${weekDays[0].getDate()} de ${weekDays[0].toLocaleDateString('pt-BR', { month: 'short' })} a ${weekDays[6].getDate()} de ${weekDays[6].toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' })}`}
               {viewMode === 'month' && selectedDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
               {viewMode === 'custom' && `${new Date(customStartDate + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })} a ${new Date(customEndDate + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' })}`}
             </span>
@@ -972,7 +978,7 @@ export default function AppointmentsCalendar() {
                 }
                 const d = new Date(selectedDate);
                 if (viewMode === 'day') d.setDate(d.getDate() + 1);
-                else if (viewMode === 'week') d.setDate(d.getDate() + 7);
+                else if (viewMode === 'week' || viewMode === 'list') d.setDate(d.getDate() + 7);
                 else d.setMonth(d.getMonth() + 1);
                 setSelectedDate(d);
               }}
@@ -993,7 +999,7 @@ export default function AppointmentsCalendar() {
           </div>
 
           <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-            {(['day', 'week', 'month', 'custom'] as const).map((mode) => (
+            {(['day', 'week', 'list', 'month', 'custom'] as const).map((mode) => (
               <button
                 key={mode}
                 onClick={() => setViewMode(mode)}
@@ -1004,7 +1010,7 @@ export default function AppointmentsCalendar() {
                     : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                 )}
               >
-                {mode === 'day' ? 'Dia' : mode === 'week' ? 'Semana' : mode === 'month' ? 'Mês' : 'Personalizado'}
+                {mode === 'day' ? 'Dia' : mode === 'week' ? 'Semana' : mode === 'list' ? 'Lista' : mode === 'month' ? 'Mês' : 'Personalizado'}
               </button>
             ))}
           </div>
@@ -1409,15 +1415,15 @@ export default function AppointmentsCalendar() {
         <div
           className={cn(
             "flex-1 min-w-0 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col overflow-hidden",
-            (viewMode === 'week' || viewMode === 'day') && "self-start"
+            (viewMode === 'week' || viewMode === 'day' || viewMode === 'list') && "self-start"
           )}
           // Semana: o quadro tem altura própria e só a grade de horários rola. Assim o cabeçalho com
           // os dias fica sempre visível e cada card continua ligado à sua coluna.
-          style={viewMode === 'week' || viewMode === 'day' ? { height: 'calc(100vh - 262px)', minHeight: 560 } : undefined}
+          style={viewMode === 'week' || viewMode === 'day' || viewMode === 'list' ? { height: 'calc(100vh - 262px)', minHeight: 560 } : undefined}
         >
           {/* Abas de profissionais: a agenda de cada um em tamanho legível */}
-          {(viewMode === 'week' || viewMode === 'day') && (() => {
-            const rangeDates = viewMode === 'week' ? weekDays.map(d => formatDateStr(d)) : [formatDateStr(selectedDate)];
+          {(viewMode === 'week' || viewMode === 'day' || viewMode === 'list') && (() => {
+            const rangeDates = (viewMode === 'week' || viewMode === 'list') ? weekDays.map(d => formatDateStr(d)) : [formatDateStr(selectedDate)];
             const inRange = clinicAppointments.filter(a => rangeDates.includes(a.date) && a.status !== 'cancelled');
             const pros = professionals.filter(pn => pn !== 'Todos');
             if (pros.length < 2) return null;
@@ -1441,6 +1447,7 @@ export default function AppointmentsCalendar() {
                     >
                       {col && <span className="w-2.5 h-2.5 rounded-full" style={{ background: col.border }} />}
                       <span className="max-w-[160px] truncate">{pn === 'Todos' ? 'Todos os profissionais' : pn.split(' ').slice(0, 2).join(' ')}</span>
+                      {isMain(pn) && <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--color-primary-blue)]/15 text-[var(--color-primary-blue)]">Principal</span>}
                       <span className="text-[10px] font-black opacity-60">{count}</span>
                     </button>
                   );
@@ -1581,6 +1588,8 @@ export default function AppointmentsCalendar() {
                                     borderLeftColor: hasConflict ? 'rgb(244 63 94)' : pc.border,
                                     top: ((start - gridStart * 60) / 60) * HOUR_PX + 1,
                                     height,
+                                    opacity: selectedProfessional === 'Todos' && !isMain(apt.professional) ? 0.55 : 1,
+                                    zIndex: isMain(apt.professional) ? 2 : 1,
                                     left: `calc(${leftPct}% + 1px)`,
                                     width: `calc(${widthPct}% - 2px)`
                                   }}
@@ -1861,6 +1870,64 @@ export default function AppointmentsCalendar() {
                     })}
                   </div>
                 </div>
+              </div>
+            );
+          })()}
+
+          {/* LISTA: clientes agendados, dia a dia, com o profissional principal primeiro */}
+          {viewMode === 'list' && (() => {
+            const days = weekDays.map(dd => formatDateStr(dd));
+            const rows = filteredAppointments
+              .filter(a => days.includes(a.date) && (selectedStatusFilter === 'cancelled' || a.status !== 'cancelled'))
+              .sort((x, y) => x.date.localeCompare(y.date) || Number(isMain(y.professional)) - Number(isMain(x.professional)) || x.time.localeCompare(y.time));
+            const fmtDay = (ds: string) => new Date(ds + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
+            if (rows.length === 0) {
+              return <div className="flex-1 flex items-center justify-center text-sm text-slate-400 p-8">Nenhum cliente agendado nesta semana{selectedProfessional !== 'Todos' ? ` para ${selectedProfessional.split(' ')[0]}` : ''}.</div>;
+            }
+            return (
+              <div className="flex-1 overflow-y-auto custom-scrollbar">
+                {days.filter(ds => rows.some(r => r.date === ds)).map(ds => {
+                  const dayRows = rows.filter(r => r.date === ds);
+                  return (
+                    <section key={ds}>
+                      <header className={cn("sticky top-0 z-10 flex items-center justify-between px-4 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900", ds === todayStr && "bg-blue-50 dark:bg-blue-950/40")}>
+                        <h3 className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200 capitalize">{fmtDay(ds)}{ds === todayStr && <span className="ml-2 text-[10px] text-blue-600">hoje</span>}</h3>
+                        <span className="text-[11px] font-bold text-slate-400">{dayRows.length} {dayRows.length === 1 ? 'cliente' : 'clientes'}</span>
+                      </header>
+                      <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {dayRows.map(apt => {
+                          const conf = STATUS_CONFIG[apt.status] || STATUS_CONFIG.pending;
+                          const pc = profColors(apt.professional);
+                          const hasConflict = conflictMap.get(apt.id)?.hasConflict;
+                          const end = minutesToTime(timeToMinutes(apt.time) + (apt.duration || 30));
+                          return (
+                            <li
+                              key={apt.id}
+                              onClick={() => setSelectedAppointmentDetail(apt)}
+                              className={cn("flex items-center gap-4 px-4 py-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40 border-l-4", apt.status === 'cancelled' && "opacity-50")}
+                              style={{ borderLeftColor: hasConflict ? 'rgb(244 63 94)' : pc.border }}
+                            >
+                              <div className="w-24 shrink-0">
+                                <p className="font-mono text-sm font-black text-slate-800 dark:text-white">{apt.time}</p>
+                                <p className="font-mono text-[10px] text-slate-400">até {end}</p>
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className={cn("text-sm font-bold text-slate-900 dark:text-white truncate", apt.status === 'cancelled' && "line-through")}>{apt.patient}</p>
+                                <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{apt.procedure}{apt.phone ? ` · ${apt.phone}` : ''}</p>
+                              </div>
+                              <div className="hidden md:flex items-center gap-1.5 w-44 shrink-0 text-xs text-slate-600 dark:text-slate-300">
+                                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: pc.border }} />
+                                <span className="truncate">{apt.professional || 'Sem profissional'}</span>
+                              </div>
+                              {hasConflict && <AlertTriangle size={14} className="text-rose-500 shrink-0" />}
+                              <span className={cn("text-[10px] font-bold px-2 py-1 rounded-full text-white shrink-0", conf.color)}>{conf.label}</span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </section>
+                  );
+                })}
               </div>
             );
           })()}
