@@ -120,9 +120,9 @@ export default function DashboardMain({ selectedClinicId }: DashboardMainProps) 
   // Health / Main KPI Stats array for StatCellRow (grid 1/2/4)
   const pctOfLeads = (n: number) => (stats.funnel.leads > 0 ? `${((n / stats.funnel.leads) * 100).toFixed(1)}% dos leads` : 'Sem leads no período');
   const healthStatItems: StatItem[] = [
-    { id: 'kpi-leads', label: 'LEADS', value: stats.funnel.leads, hint: 'Entradas no período', icon: <Users size={18} />, tone: 'info' },
-    { id: 'kpi-appointments', label: 'AGENDAMENTOS', value: stats.funnel.appointed, hint: pctOfLeads(stats.funnel.appointed), icon: <Calendar size={18} />, tone: 'neutral' },
-    { id: 'kpi-attended', label: 'COMPARECIMENTOS', value: stats.funnel.attended, hint: pctOfLeads(stats.funnel.attended), icon: <CheckCircle2 size={18} />, tone: 'success' },
+    { id: 'kpi-leads', label: 'LEADS NOVOS', value: stats.funnel.leads, hint: 'Escreveram primeiro, não são pacientes, até as 18h', icon: <Users size={18} />, tone: 'info' },
+    { id: 'kpi-appointments', label: 'AGENDAMENTOS', value: stats.appointments, hint: 'Consultas marcadas no período (agenda)', icon: <Calendar size={18} />, tone: 'neutral' },
+    { id: 'kpi-attended', label: 'COMPARECIMENTOS', value: stats.attendedApts, hint: 'Consultas atendidas no período', icon: <CheckCircle2 size={18} />, tone: 'success' },
     { id: 'kpi-sales', label: 'VENDAS', value: stats.funnel.sold, hint: pctOfLeads(stats.funnel.sold), icon: <Activity size={18} />, tone: 'warning' }
   ];
 

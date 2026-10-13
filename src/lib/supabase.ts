@@ -357,14 +357,18 @@ const withoutExtraColumns = (row: Record<string, any>) => {
 export async function loadLeadsFromDb(clinicId?: string): Promise<DbLead[] | null> {
   const sb = getSupabase();
   if (!sb) return null;
-  let query = sb.from('leads').select('*').order('created_at', { ascending: false });
-  if (clinicId && clinicId !== 'all') query = query.eq('clinic_id', clinicId);
-  const { data, error } = await query;
-  if (error) {
-    console.error('Erro ao carregar leads do Supabase:', error.message);
+  try {
+    // Lê em páginas: o Supabase devolve no máximo 1000 linhas por consulta
+    const rows = await fetchAllRows((a, b) => {
+      let q = sb.from('leads').select('*').order('created_at', { ascending: false }).order('id').range(a, b);
+      if (clinicId && clinicId !== 'all') q = q.eq('clinic_id', clinicId);
+      return q;
+    });
+    return rows.map(rowToLead);
+  } catch (e: any) {
+    console.error('Erro ao carregar leads do Supabase:', e?.message);
     return null;
   }
-  return (data || []).map(rowToLead);
 }
 
 export async function fetchLeadsFromDb(clinicId?: string): Promise<Lead[]> {
@@ -880,14 +884,18 @@ function appointmentToRow(a: any): Record<string, any> {
 export async function fetchAppointmentsFromDb(clinicId?: string) {
   const sb = getSupabase();
   if (!sb) return null;
-  let q = sb.from('appointments').select('*').order('appointment_date', { ascending: false }).order('start_time', { ascending: true });
-  if (clinicId && clinicId !== 'all') q = q.eq('clinic_id', clinicId);
-  const { data, error } = await q;
-  if (error) {
-    console.error('Erro ao carregar agenda do Supabase:', error.message);
+  try {
+    // Lê em páginas: o Supabase devolve no máximo 1000 linhas por consulta
+    const rows = await fetchAllRows((a, b) => {
+      let q = sb.from('appointments').select('*').order('appointment_date', { ascending: false }).order('start_time', { ascending: true }).order('id').range(a, b);
+      if (clinicId && clinicId !== 'all') q = q.eq('clinic_id', clinicId);
+      return q;
+    });
+    return rows.map(rowToAppointment);
+  } catch (e: any) {
+    console.error('Erro ao carregar agenda do Supabase:', e?.message);
     return null;
   }
-  return (data || []).map(rowToAppointment);
 }
 
 export async function saveAppointmentsToDb(apts: any[]): Promise<boolean> {
@@ -932,12 +940,17 @@ export async function insertProfessionalInDb(p: { clinicId: string; name: string
 async function loadAppointments(clinicId?: string): Promise<any[]> {
   const sb = getSupabase();
   if (sb) {
-    let q = sb.from('appointments').select('id,status,appointment_date,clinic_id');
-    if (clinicId && clinicId !== 'all') q = q.eq('clinic_id', clinicId);
-    const { data, error } = await q;
-    if (!error && data) return data;
-    if (error) console.error('Erro ao carregar agendamentos do Supabase:', error.message);
-    return [];
+    // O Supabase devolve no máximo 1000 linhas por consulta: lê em páginas até acabar
+    try {
+      return await fetchAllRows((a, b) => {
+        let q = sb.from('appointments').select('id,status,appointment_date,clinic_id').order('id').range(a, b);
+        if (clinicId && clinicId !== 'all') q = q.eq('clinic_id', clinicId);
+        return q;
+      });
+    } catch (e: any) {
+      console.error('Erro ao carregar agendamentos do Supabase:', e?.message);
+      return [];
+    }
   }
   try {
     const raw = localStorage.getItem('crm_appointments_data');
@@ -1006,6 +1019,51 @@ const dayKey = (offset: number) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+/** Hora limite (horário local) para um contato contar como "lead novo" do dia no dashboard. */
+export const NEW_LEAD_CUTOFF_HOUR = 18;
+
+/**
+ * Leads NOVOS: o contato escreveu primeiro, não é paciente da clínica e chegou dentro do horário de atendimento.
+ * Quem a clínica chamou primeiro, pacientes antigos e contatos fora do horário continuam no funil, mas não
+ * entram na contagem de "leads novos".
+ */
+async function filterNewLeads(leads: Lead[], clinicId?: string): Promise<Lead[]> {
+  const sb = getSupabase();
+  if (!sb || leads.length === 0) return leads;
+
+  // quem escreveu primeiro
+  const firstFrom = new Map<string, string>();
+  const ids = leads.map(l => l.id).filter(isUuid);
+  for (let i = 0; i < ids.length; i += 80) {
+    const { data } = await sb
+      .from('lead_interactions')
+      .select('lead_id,interaction_type,created_at')
+      .in('lead_id', ids.slice(i, i + 80))
+      .in('interaction_type', ['mensagem_cliente', 'mensagem_responsavel'])
+      .order('created_at', { ascending: true })
+      .limit(5000);
+    (data || []).forEach((r: any) => { if (!firstFrom.has(r.lead_id)) firstFrom.set(r.lead_id, r.interaction_type); });
+  }
+
+  // pacientes da clínica (comparação pelos 8 últimos dígitos)
+  const patientKeys = new Set<string>();
+  for (let from = 0; ; from += 1000) {
+    let q = sb.from('patients').select('phone').range(from, from + 999);
+    if (clinicId && clinicId !== 'all') q = q.eq('clinic_id', clinicId);
+    const { data } = await q;
+    (data || []).forEach((r: any) => { const k = phoneKey(r.phone); if (k) patientKeys.add(k); });
+    if (!data || data.length < 1000) break;
+  }
+
+  return leads.filter(l => {
+    if (firstFrom.get(l.id) !== 'mensagem_cliente') return false;
+    const k = phoneKey(l.whatsapp || l.phone);
+    if (k && patientKeys.has(k)) return false;
+    const hour = new Date(l.createdAt).getHours();
+    return isNaN(hour) || hour < NEW_LEAD_CUTOFF_HOUR;
+  });
+}
+
 /** Limites (YYYY-MM-DD) de cada opção do seletor de período do dashboard. */
 function rangeBounds(range?: string): [string, string] {
   switch (range) {
@@ -1031,6 +1089,7 @@ const EMPTY_STATS = {
   channelsPerformance: [] as any[],
   channelHighlights: [] as any[],
   funnel: { leads: 0, appointed: 0, attended: 0, sold: 0 },
+  attendedApts: 0,
   pipelineValue: 0,
   revenue: 0,
   avgTicket: 0
@@ -1063,7 +1122,7 @@ export function useSupabaseDashboardStats(clinicId?: string, range?: string) {
           return !!day && day >= rangeFrom && day <= rangeTo;
         };
         // Leads sem telefone (restos de erros do fluxo) não contam como lead
-        const leads = allLeads.filter(l => inRange(l.createdAt) && phoneKey(l.whatsapp || l.phone));
+        const leads = await filterNewLeads(allLeads.filter(l => inRange(l.createdAt) && phoneKey(l.whatsapp || l.phone)), clinicId);
         const apts = aptsAll.filter(a => inRange(a.appointment_date || a.date));
 
         let followups = 0;
@@ -1139,6 +1198,7 @@ export function useSupabaseDashboardStats(clinicId?: string, range?: string) {
           channelsPerformance: Object.values(byChannel).sort((a: any, b: any) => b.leads - a.leads),
           channelHighlights: highlights,
           funnel,
+          attendedApts: apts.filter(a => ['attended', 'completed'].includes(String(a.status))).length,
           pipelineValue,
           revenue,
           avgTicket: sold > 0 ? revenue / sold : 0
