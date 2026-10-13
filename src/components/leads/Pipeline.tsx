@@ -42,7 +42,7 @@ import KanbanCard from './KanbanCard';
 import { cn } from '@/src/lib/utils';
 import { exportToCSV } from '../../lib/exportUtils';
 import { useApp } from '../../context/AppContext';
-import { useSupabaseLeads } from '../../lib/supabase';
+import { useSupabaseLeads, localDay } from '../../lib/supabase';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
@@ -234,7 +234,7 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
     const matchesSource = selectedSourceFilter === 'all' || lead.sourceId === selectedSourceFilter;
     const matchesOwner = ownerFilter === 'all' || (ownerFilter === '__none' ? !lead.responsibleName : lead.responsibleName === ownerFilter);
 
-    const day = String((lead as any)[dateField] || lead.createdAt || '').slice(0, 10);
+    const day = localDay(String((lead as any)[dateField] || lead.createdAt || ''));
     const matchesDate = (!dateFrom || (day && day >= dateFrom)) && (!dateTo || (day && day <= dateTo));
 
     const value = Number(lead.estimatedValue || 0);

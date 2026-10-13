@@ -108,6 +108,16 @@ const originToDb = (label?: string): string => {
   return 'manual';
 };
 
+/** Dia local (YYYY-MM-DD, horário do navegador) de um timestamp ISO. Datas simples (YYYY-MM-DD) passam como estão. */
+export const localDay = (v?: string | null): string => {
+  const t = String(v || '');
+  if (!t) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  const d = new Date(t);
+  if (isNaN(d.getTime())) return t.slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 /** Só dígitos. */
 export const phoneDigits = (v?: string | null) => String(v || '').replace(/\D/g, '');
 /** Chave de comparação: os 8 últimos dígitos ignoram DDI, DDD, 9º dígito e formatação. */
@@ -1049,10 +1059,11 @@ export function useSupabaseDashboardStats(clinicId?: string, range?: string) {
         // Período escolhido no topo do dashboard (leads pela data de entrada, consultas pela data da consulta)
         const [rangeFrom, rangeTo] = rangeBounds(range);
         const inRange = (d: string) => {
-          const day = String(d || '').slice(0, 10);
+          const day = localDay(d);
           return !!day && day >= rangeFrom && day <= rangeTo;
         };
-        const leads = allLeads.filter(l => inRange(l.createdAt));
+        // Leads sem telefone (restos de erros do fluxo) não contam como lead
+        const leads = allLeads.filter(l => inRange(l.createdAt) && phoneKey(l.whatsapp || l.phone));
         const apts = aptsAll.filter(a => inRange(a.appointment_date || a.date));
 
         let followups = 0;
