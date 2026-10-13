@@ -20,7 +20,7 @@ import { cn } from '@/src/lib/utils';
 import { useApp } from '@/src/context/AppContext';
 import { exportLeadsPDF } from '@/src/lib/pdf-export';
 import { exportToCSV } from '@/src/lib/exportUtils';
-import { fetchLeadsFromDb, deleteLeadFromDb, updateLeadInDb } from '@/src/lib/supabase';
+import { fetchLeadsFromDb, deleteLeadFromDb, updateLeadInDb , formatPhoneBR } from '@/src/lib/supabase';
 import { Card } from '@/src/components/ui/Card';
 import { Button } from '@/src/components/ui/Button';
 import { Badge } from '@/src/components/ui/Badge';
@@ -470,7 +470,7 @@ export default function LeadTable({ globalSearchTerm = '', onSelectLead }: LeadT
                       </div>
                       <div>
                         <p className="text-xs font-bold text-[var(--color-text-primary)] leading-none">{lead.name}</p>
-                        <p className="text-[11px] text-[var(--color-text-faint)] mt-1">{lead.whatsapp}</p>
+                        <p className="text-[11px] text-[var(--color-text-faint)] mt-1">{formatPhoneBR(lead.whatsapp || lead.phone)}</p>
                       </div>
                     </div>
                   </td>

@@ -24,6 +24,7 @@ import {
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { useApp } from '../../context/AppContext';
+import { runClinicorpSync } from '../../lib/clinicorpSync';
 
 interface ClinicorpConfigPanelProps {
   onBack: () => void;
@@ -57,7 +58,7 @@ interface CronSyncLog {
 
 export default function ClinicorpConfigPanel({ onBack }: ClinicorpConfigPanelProps) {
   const { addToast } = useApp();
-  const [apiKey, setApiKey] = useState('16cd1c77-d105-4229-8496-51471d1b502c');
+  const [apiKey, setApiKey] = useState(() => { try { return localStorage.getItem('clinicorp_api_key_ceopodontologia') || ''; } catch { return ''; } });
   const [isTesting, setIsTesting] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success'>('idle');
   const [copied, setCopied] = useState(false);
@@ -96,26 +97,11 @@ export default function ClinicorpConfigPanel({ onBack }: ClinicorpConfigPanelPro
   const [simulatingEvent, setSimulatingEvent] = useState(false);
 
   // Cron Job / Periodic Sync State
-  const [cronActive, setCronActive] = useState(true);
+  const [cronActive, setCronActive] = useState(false);
   const [cronIntervalMinutes, setCronIntervalMinutes] = useState(15);
   const [cronRunning, setCronRunning] = useState(false);
-  const [lastCronRun, setLastCronRun] = useState('Hoje às 10:15');
-  const [cronLogs, setCronLogs] = useState<CronSyncLog[]>([
-    {
-      id: 'cron_1',
-      timestamp: '2026-09-25 10:15:00',
-      syncedCount: 12,
-      status: 'success',
-      message: '12 status de pacientes pendentes sincronizados com sucesso via API Clinicorp.'
-    },
-    {
-      id: 'cron_2',
-      timestamp: '2026-09-25 10:00:00',
-      syncedCount: 8,
-      status: 'success',
-      message: '8 status de pacientes pendentes sincronizados com sucesso via API Clinicorp.'
-    }
-  ]);
+  const [lastCronRun, setLastCronRun] = useState('Ainda não executada');
+  const [cronLogs, setCronLogs] = useState<CronSyncLog[]>([]);
 
   useEffect(() => {
     localStorage.setItem('clinicorp_api_key_ceopodontologia', apiKey);
@@ -130,44 +116,43 @@ export default function ClinicorpConfigPanel({ onBack }: ClinicorpConfigPanelPro
     return () => clearInterval(timer);
   }, [cronActive, cronIntervalMinutes]);
 
-  const runPeriodicSync = (isAutomatic = false) => {
+  const summarize = (r: Awaited<ReturnType<typeof runClinicorpSync>>) =>
+    `${r.appointments ?? 0} agendamentos, ${r.patients ?? 0} pacientes e ${r.professionals ?? 0} profissionais`;
+
+  const runPeriodicSync = async (isAutomatic = false) => {
     setCronRunning(true);
-    setTimeout(() => {
-      setCronRunning(false);
-      const count = Math.floor(Math.random() * 15) + 3;
-      const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
-      setLastCronRun(nowStr);
-
-      const newLog: CronSyncLog = {
-        id: 'cron_' + Date.now(),
-        timestamp: nowStr,
-        syncedCount: count,
-        status: 'success',
-        message: `${count} status de pacientes pendentes consultados e atualizados na API Clinicorp.`
-      };
-
-      setCronLogs(prev => [newLog, ...prev]);
-      if (!isAutomatic) {
-        addToast(`Sincronização periódica concluída! ${count} pacientes pendentes atualizados.`, 'success');
-      }
-    }, 1500);
+    const r = await runClinicorpSync();
+    setCronRunning(false);
+    const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    setLastCronRun(nowStr);
+    const newLog: CronSyncLog = {
+      id: 'cron_' + Date.now(),
+      timestamp: nowStr,
+      syncedCount: r.appointments ?? 0,
+      status: r.ok ? 'success' : 'error',
+      message: r.ok ? `Clinicorp → CRM: ${summarize(r)}.` : (r.message || 'Falha na sincronização.')
+    };
+    setCronLogs(prev => [newLog, ...prev]);
+    if (!isAutomatic) addToast(r.ok ? `Sincronização concluída: ${summarize(r)}.` : (r.message || 'Falha na sincronização.'), r.ok ? 'success' : 'error');
   };
 
-  const handleTestConnection = () => {
+  // Teste real: consulta o Clinicorp sem gravar nada no banco
+  const handleTestConnection = async () => {
     setIsTesting(true);
-    setTimeout(() => {
-      setIsTesting(false);
-      addToast('Conexão com Clinicorp (CEOP Odontologia) estabelecida com sucesso! API Key validada.', 'success');
-    }, 1200);
+    const r = await runClinicorpSync({ dryRun: true });
+    setIsTesting(false);
+    addToast(
+      r.ok ? `Conexão com o Clinicorp OK: encontrei ${summarize(r)} (${r.range?.from} a ${r.range?.to}).` : (r.message || 'Não foi possível conectar ao Clinicorp.'),
+      r.ok ? 'success' : 'error'
+    );
   };
 
-  const handleSyncNow = () => {
+  const handleSyncNow = async () => {
     setSyncStatus('syncing');
-    setTimeout(() => {
-      setSyncStatus('success');
-      addToast('Sincronização de pacientes e agenda com Clinicorp concluída com sucesso!', 'success');
-      setTimeout(() => setSyncStatus('idle'), 3000);
-    }, 1800);
+    const r = await runClinicorpSync();
+    setSyncStatus(r.ok ? 'success' : 'idle');
+    addToast(r.ok ? `Clinicorp → CRM concluído: ${summarize(r)}.` : (r.message || 'Falha na sincronização.'), r.ok ? 'success' : 'error');
+    if (r.ok) setTimeout(() => setSyncStatus('idle'), 3000);
   };
 
   const handleCopyKey = () => {

@@ -15,6 +15,8 @@ export interface ConflictingItem {
 export interface AppointmentConflictInfo {
   hasConflict: boolean;
   conflicts: ConflictingItem[];
+  /** Mesmo conteúdo de `conflicts`; é o nome que a tela da Agenda lê. */
+  conflictingWith: ConflictingItem[];
   reason: string;
 }
 
@@ -56,14 +58,13 @@ export function detectAppointmentConflicts(appointments: any[]): Map<string, App
       // Must be on the exact same date
       if (aptA.date !== aptB.date) continue;
 
-      // Must be in the same clinic or share the same professional
       const sameClinic = aptA.clinicId && aptB.clinicId ? aptA.clinicId === aptB.clinicId : true;
-      const sameProf = aptA.professional && aptB.professional && aptA.professional !== 'Todos' && aptB.professional !== 'Todos' 
-        ? aptA.professional === aptB.professional 
-        : false;
+      const bothHaveProf = Boolean(aptA.professional && aptB.professional && aptA.professional !== 'Todos' && aptB.professional !== 'Todos');
+      const sameProf = bothHaveProf && aptA.professional === aptB.professional;
 
-      // If neither same clinic nor same professional, no direct schedule collision
-      if (!sameClinic && !sameProf) continue;
+      // Com profissionais informados, só há conflito se for o MESMO profissional: dois dentistas
+      // diferentes atendendo no mesmo horário é normal. Sem profissional, vale a mesma clínica.
+      if (bothHaveProf ? !sameProf : !sameClinic) continue;
 
       const rangeB = getTimeRangeMinutes(aptB.time, aptB.duration);
 
@@ -95,6 +96,7 @@ export function detectAppointmentConflicts(appointments: any[]): Map<string, App
       conflictMap.set(aptA.id, {
         hasConflict: true,
         conflicts: conflictsForA,
+        conflictingWith: conflictsForA,
         reason,
       });
     }

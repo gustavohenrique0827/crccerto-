@@ -120,18 +120,6 @@ export function Topbar({
         >
           {isSidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
         </button>
-
-        {/* Global Search Input */}
-        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] rounded-[var(--radius-control)] w-64 lg:w-80">
-          <Search size={14} className="text-[var(--color-text-faint)] shrink-0" />
-          <input
-            type="text"
-            placeholder="Buscar leads, pacientes ou atalhos..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-transparent text-xs text-[var(--color-text-primary)] placeholder:text-[var(--color-text-faint)] outline-none"
-          />
-        </div>
       </div>
 
       {/* Right Controls */}
@@ -292,9 +280,6 @@ export function Topbar({
             <div className="hidden md:block min-w-0">
               <p className="text-xs font-bold text-[var(--color-text-primary)] truncate max-w-[140px]">
                 {user?.name || 'Operador'}
-              </p>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-primary-blue)] truncate max-w-[140px]">
-                {isAllClinicsView ? 'Rede Consolidada' : (currentClinic?.name || 'Cliente')}
               </p>
             </div>
           </button>

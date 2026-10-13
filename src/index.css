@@ -1,51 +1,117 @@
 @import "tailwindcss";
 
+/* `dark:` segue o botão de tema do app (classe .dark no <html>), não o modo escuro do sistema */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Escalas do Tailwind redefinidas: todo `blue-*`, `indigo-*` e `slate-*` usado no app
+   passa a seguir a identidade (petróleo clínico + neutros frios) sem editar cada tela. */
+@theme {
+  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: "Bricolage Grotesque", "Instrument Sans", ui-sans-serif, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-blue-50: #ECF7F8;
+  --color-blue-100: #D0ECEF;
+  --color-blue-200: #A5D8DE;
+  --color-blue-300: #6FBFC9;
+  --color-blue-400: #3AA2B0;
+  --color-blue-500: #1C8797;
+  --color-blue-600: #0F6B78;
+  --color-blue-700: #0C5762;
+  --color-blue-800: #0B454E;
+  --color-blue-900: #09373E;
+  --color-blue-950: #04222A;
+
+  --color-indigo-50: #EEF3FA;
+  --color-indigo-100: #DCE7F5;
+  --color-indigo-200: #B9CEEA;
+  --color-indigo-300: #8FAED9;
+  --color-indigo-400: #6088C4;
+  --color-indigo-500: #3F68AB;
+  --color-indigo-600: #2F5391;
+  --color-indigo-700: #264375;
+  --color-indigo-800: #1F3860;
+  --color-indigo-900: #192D4E;
+  --color-indigo-950: #0F1B30;
+
+  --color-slate-50: #F4F7F7;
+  --color-slate-100: #E9EFEF;
+  --color-slate-200: #D7E0E1;
+  --color-slate-300: #B7C5C7;
+  --color-slate-400: #849699;
+  --color-slate-500: #63797D;
+  --color-slate-600: #4A5F63;
+  --color-slate-700: #364A4E;
+  --color-slate-800: #22343A;
+  --color-slate-900: #15252A;
+  --color-slate-950: #0B171B;
+}
+
 @layer base {
   :root {
-    --color-primary-blue: #2563EB;
-    --color-tech-cyan: #06B6D4;
-    --color-success: #10B981;
-    --color-warning: #F59E0B;
-    --color-danger: #F43F5E;
-    --color-info: #3B82F6;
-    
-    --color-surface: #F8FAFC;
+    --color-primary-blue: #0F6B78;
+    --color-tech-cyan: #22A6B3;
+    --color-success: #12A06B;
+    --color-warning: #E39A1B;
+    --color-danger: #E5484D;
+    --color-info: #2F7FD1;
+
+    /* Superfícies: porcelana fria em vez de cinza-azulado genérico */
+    --color-surface: #F2F5F4;
     --color-surface-elevated: #FFFFFF;
-    --color-surface-sunken: #F1F5F9;
-    
-    --color-border-default: #E2E8F0;
-    --color-border-subtle: #F1F5F9;
-    
-    --color-text-primary: #0F172A;
-    --color-text-muted: #64748B;
-    --color-text-faint: #94A3B8;
+    --color-surface-sunken: #E9EFEE;
 
-    --radius-control: 0.625rem;
-    --radius-panel: 1rem;
-    --radius-panel-lg: 1.5rem;
+    --color-border-default: #D9E2E1;
+    --color-border-subtle: #E6ECEB;
 
-    --shadow-control: 0 1px 2px rgba(2, 6, 23, 0.06);
-    --shadow-panel: 0 8px 24px -6px rgba(2, 6, 23, 0.10);
+    --color-text-primary: #10262B;
+    --color-text-muted: #4F6468;
+    --color-text-faint: #75898C;
+
+    /* Coluna de navegação: tinta escura, âncora visual do app */
+    --color-rail: #0E2227;
+    --color-rail-fg: #9DB4B8;
+
+    /* Assinatura: rampa do funil, do primeiro contato até a venda */
+    --stage-0: #AFC0C3;
+    --stage-1: #8FB2B7;
+    --stage-2: #6DA5AC;
+    --stage-3: #4A96A0;
+    --stage-4: #2B8592;
+    --stage-5: #0F6B78;
+    --stage-6: #0C7A63;
+    --stage-7: #0E8F58;
+    --stage-lost: #DE6244;
+    --stage-void: #8A9A9D;
+
+    --radius-control: 0.5rem;
+    --radius-panel: 0.75rem;
+    --radius-panel-lg: 1rem;
+
+    --shadow-control: 0 1px 1px rgba(14, 34, 39, 0.05);
+    --shadow-panel: 0 1px 2px rgba(14, 34, 39, 0.05), 0 6px 18px -8px rgba(14, 34, 39, 0.12);
   }
 
   html.dark {
-    --color-surface: #0B1120;
-    --color-surface-elevated: #1E293B;
-    --color-surface-sunken: #111827;
-    
-    --color-border-default: rgba(255, 255, 255, 0.10);
-    --color-border-subtle: rgba(255, 255, 255, 0.05);
-    
-    --color-text-primary: #F8FAFC;
-    --color-text-muted: #94A3B8;
-    --color-text-faint: #64748B;
+    --color-surface: #0A1518;
+    --color-surface-elevated: #132226;
+    --color-surface-sunken: #0E1C20;
 
-    --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-panel: 0 8px 24px -6px rgba(0, 0, 0, 0.45);
+    --color-border-default: rgba(190, 220, 225, 0.12);
+    --color-border-subtle: rgba(190, 220, 225, 0.06);
+
+    --color-text-primary: #EAF3F4;
+    --color-text-muted: #9DB4B8;
+    --color-text-faint: #6E878B;
+
+    --color-rail: #071013;
+
+    --shadow-control: 0 1px 1px rgba(0, 0, 0, 0.35);
+    --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 22px -8px rgba(0, 0, 0, 0.55);
   }
 
   html {
-    font-family: Arial, "Helvetica Neue", system-ui, -apple-system, sans-serif;
+    font-family: var(--font-sans);
     font-size: 87.5%; /* 1rem = 14px */
     background-color: var(--color-surface);
     color: var(--color-text-primary);
@@ -61,6 +127,28 @@
   @media (min-width: 1920px) {
     html {
       font-size: 100%;
+    }
+  }
+
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.015em;
+  }
+
+  /* Números, telefones e valores em fonte técnica de largura fixa */
+  .font-mono, .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-primary-blue);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
     }
   }
 
@@ -81,21 +169,24 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.3);
+  background: rgba(99, 121, 125, 0.32);
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.5);
+  background: rgba(99, 121, 125, 0.55);
 }
 
 /* Animation utilities */
+/* Sem `forwards`: enquanto uma animação de transform "preenche" o estado final, o Chrome trata o
+   elemento como ancestral de referência de todo `position: fixed` dentro dele (modais, arrastar
+   e soltar), deslocando esses elementos. */
 @keyframes fadeIn {
   from { opacity: 0; transform: scale(0.98); }
-  to { opacity: 1; transform: scale(1); }
+  to { opacity: 1; transform: none; }
 }
 
 .animate-fade-in {
-  animation: fadeIn 180ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: fadeIn 180ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
 }
 
 /* Global Slot Identity Helper */

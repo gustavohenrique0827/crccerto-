@@ -162,7 +162,7 @@ export default function ClinicList() {
                     size="sm"
                   />
                   <span className="text-[10px] text-slate-400 font-mono">
-                    CNPJ: {clinic.cnpj}
+                    CNPJ: {clinic.cnpj && !/^0+[.\/\-0]*$/.test(clinic.cnpj) ? clinic.cnpj : 'não informado'}
                   </span>
                 </div>
               </div>
@@ -183,7 +183,7 @@ export default function ClinicList() {
                 </div>
                 <div className="flex items-center gap-2 truncate">
                   <Settings size={14} className="text-slate-400 shrink-0" />
-                  <span className="truncate capitalize">{clinic.system === 'none' ? 'Sem Software' : clinic.system.replace('_', ' ')}</span>
+                  <span className="truncate capitalize">{clinic.system === 'none' ? 'Sem sistema integrado' : clinic.system === 'clinicorp' ? 'Clinicorp' : clinic.system.replace('_', ' ')}</span>
                 </div>
               </div>
 

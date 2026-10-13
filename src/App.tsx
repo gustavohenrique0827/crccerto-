@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { MainSidebar } from './components/layout/MainSidebar';
 import { Topbar } from './components/layout/Topbar';
 import { 
@@ -20,26 +20,26 @@ import { Role } from './types';
 
 // Workspaces and Views
 import DashboardMain from './components/dashboard/DashboardMain';
-import Pipeline from './components/leads/Pipeline';
+const Pipeline = lazy(() => import('./components/leads/Pipeline'));
 import LeadDetail from './components/leads/LeadDetail';
-import PatientsList from './components/patients/PatientsList';
-import AppointmentsCalendar from './components/appointments/AppointmentsCalendar';
-import FollowUpWorkspace from './components/followups/FollowUpWorkspace';
-import TaskWorkspace from './components/tasks/TaskWorkspace';
-import DataAnalysisWorkspace from './components/analytics/DataAnalysisWorkspace';
-import AnalyticsCenter from './components/analytics/AnalyticsCenter';
-import IntegrationsWorkspace from './components/integrations/IntegrationsWorkspace';
-import TeamManagement from './components/team/TeamManagement';
-import ClinicList from './components/clinics/ClinicList';
-import SystemSettings from './components/settings/SystemSettings';
-import SystemWalkthroughGuide from './components/guide/SystemWalkthroughGuide';
-import AIAssistant from './components/ai/AIAssistant';
+const PatientsList = lazy(() => import('./components/patients/PatientsList'));
+const AgendaPage = lazy(() => import('./components/appointments/AgendaPage'));
+const FollowUpWorkspace = lazy(() => import('./components/followups/FollowUpWorkspace'));
+const TaskWorkspace = lazy(() => import('./components/tasks/TaskWorkspace'));
+const DataAnalysisWorkspace = lazy(() => import('./components/analytics/DataAnalysisWorkspace'));
+const AnalyticsCenter = lazy(() => import('./components/analytics/AnalyticsCenter'));
+const IntegrationsWorkspace = lazy(() => import('./components/integrations/IntegrationsWorkspace'));
+const TeamManagement = lazy(() => import('./components/team/TeamManagement'));
+const ClinicList = lazy(() => import('./components/clinics/ClinicList'));
+const SystemSettings = lazy(() => import('./components/settings/SystemSettings'));
+const SystemWalkthroughGuide = lazy(() => import('./components/guide/SystemWalkthroughGuide'));
+const AIAssistant = lazy(() => import('./components/ai/AIAssistant'));
 
 // Modals & Protection
 import TaskModal from './components/dashboard/TaskModal';
 import NewLeadModal from './components/leads/NewLeadModal';
-import NewClinicModal from './components/clinics/NewClinicModal';
-import ClinicHealthDrawer from './components/clinics/ClinicHealthDrawer';
+const NewClinicModal = lazy(() => import('./components/clinics/NewClinicModal'));
+const ClinicHealthDrawer = lazy(() => import('./components/clinics/ClinicHealthDrawer'));
 import ToastContainer from './components/layout/ToastContainer';
 import LoginPage from './LoginPage';
 import LogoutConfirmationModal from './components/auth/LogoutConfirmationModal';
@@ -81,9 +81,11 @@ export default function App() {
 
   const handleAddLead = async (lead: any) => {
     try {
-      await addLead(lead);
-      addToast(`Lead "${lead.name}" cadastrado com sucesso!`, 'success');
-      setIsNewLeadModalOpen(false);
+      const ok = await addLead(lead);
+      if (ok) {
+        addToast(`Lead "${lead.name}" cadastrado com sucesso!`, 'success');
+        setIsNewLeadModalOpen(false);
+      }
     } catch (err: any) {
       addToast(`Erro ao cadastrar lead: ${err.message || 'Tente novamente'}`, 'error');
     }
@@ -149,6 +151,7 @@ export default function App() {
 
         {/* Dynamic Content Workspace */}
         <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 pb-24 sm:pb-8 relative z-10 custom-scrollbar">
+          <Suspense fallback={<div className="h-64 flex items-center justify-center"><div className="animate-spin rounded-full h-7 w-7 border-b-2 border-[var(--color-primary-blue)]" /></div>}>
           <AnimatePresence mode="wait">
             {activeTab === 'dashboard' ? (
               <motion.div
@@ -169,40 +172,40 @@ export default function App() {
                 transition={{ duration: 0.18 }}
                 className="h-full flex flex-col space-y-4"
               >
-                {subPage === 'lead-detail' ? (
+                {/* O funil continua montado com a ficha aberta por cima: ao fechar, ele está
+                    exatamente onde você deixou (rolagem, coluna, filtros). */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+                  <div>
+                    <h1 className="text-2xl font-black tracking-tight text-[var(--color-text-primary)]">
+                      Funil de CRM & Pipeline
+                    </h1>
+                    <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                      Gestão de etapas comerciais, qualificação de oportunidades e negociações em tempo real.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setIsNewLeadModalOpen(true)}
+                    className="bg-[var(--color-primary-blue)] !text-white px-4 py-2 rounded-[var(--radius-control)] text-xs font-bold shadow-md shadow-[var(--color-primary-blue)]/20 hover:brightness-110 transition-all flex items-center justify-center gap-2 uppercase tracking-wider self-stretch sm:self-auto cursor-pointer"
+                  >
+                    <Plus size={16} />
+                    <span>Novo Lead</span>
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-hidden">
+                  <Pipeline
+                    globalSearchTerm={globalSearchTerm}
+                    selectedClinicId={currentClinicId}
+                    onLeadClick={handleOpenLeadDetail}
+                  />
+                </div>
+
+                {subPage === 'lead-detail' && (
                   <LeadDetail
                     isOpen={true}
                     onClose={() => setSubPage(null)}
                     lead={subPageData}
                   />
-                ) : (
-                  <>
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
-                      <div>
-                        <h1 className="text-2xl font-black tracking-tight text-[var(--color-text-primary)]">
-                          Funil de CRM & Pipeline
-                        </h1>
-                        <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                          Gestão de etapas comerciais, qualificação de oportunidades e negociações em tempo real.
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => setIsNewLeadModalOpen(true)}
-                        className="bg-[var(--color-primary-blue)] !text-white px-4 py-2 rounded-[var(--radius-control)] text-xs font-bold shadow-md shadow-[var(--color-primary-blue)]/20 hover:brightness-110 transition-all flex items-center justify-center gap-2 uppercase tracking-wider self-stretch sm:self-auto cursor-pointer"
-                      >
-                        <Plus size={16} />
-                        <span>Novo Lead</span>
-                      </button>
-                    </div>
-
-                    <div className="flex-1 overflow-hidden">
-                      <Pipeline
-                        globalSearchTerm={globalSearchTerm}
-                        selectedClinicId={currentClinicId}
-                        onLeadClick={handleOpenLeadDetail}
-                      />
-                    </div>
-                  </>
                 )}
               </motion.div>
             ) : activeTab === 'pacientes' ? (
@@ -226,7 +229,7 @@ export default function App() {
                   exit={{ opacity: 0, scale: 0.99 }}
                   transition={{ duration: 0.18 }}
                 >
-                  <AppointmentsCalendar />
+                  <AgendaPage />
                 </motion.div>
               </ProtectedModuleRoute>
             ) : activeTab === 'followups' ? (
@@ -367,6 +370,7 @@ export default function App() {
               </div>
             )}
           </AnimatePresence>
+          </Suspense>
         </div>
 
         {/* Mobile Fixed Bottom Navigation Bar */}
@@ -444,6 +448,7 @@ export default function App() {
         onAddLead={handleAddLead}
       />
 
+      <Suspense fallback={null}>
       <NewClinicModal
         isOpen={isNewClinicModalOpen}
         onClose={() => setIsNewClinicModalOpen(false)}
@@ -454,6 +459,7 @@ export default function App() {
         onClose={() => setIsHealthDrawerOpen(false)}
         clinicId={currentClinicId}
       />
+      </Suspense>
 
       <LogoutConfirmationModal
         isOpen={isLogoutModalOpen}

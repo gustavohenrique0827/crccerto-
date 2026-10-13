@@ -20,6 +20,7 @@ import {
 import { useApp } from '../../context/AppContext';
 import { getAccessToken } from '../../lib/googleAuth';
 import { createCalendarEvent } from '../../lib/googleCalendar';
+import { fetchProfessionalsFromDb, isSupabaseConfigured, newUuid, saveAppointmentsToDb } from '../../lib/supabase';
 
 interface ScheduleModalProps {
   isOpen: boolean;
@@ -67,24 +68,22 @@ export default function ScheduleModal({
   const [notes, setNotes] = useState('');
   const [syncWithGoogle, setSyncWithGoogle] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const leadIdRef = React.useRef<string | undefined>(undefined);
 
-  // Dynamic professionals from registered team or default to logged user
-  const teamMembers = useMemo(() => {
+  const [dbProfessionals, setDbProfessionals] = useState<string[]>([]);
+  const localTeam = useMemo(() => {
     try {
       const saved = localStorage.getItem('crm_team_data');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((m: any) => m.name);
-        }
-      }
-    } catch (e) {
-      console.error(e);
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed.map((m: any) => m.name).filter(Boolean) : [];
+    } catch {
+      return [];
     }
-    return user?.name ? [user.name] : ['Dra. Carolina Mendes', 'Dr. Roberto Silveira', 'Dra. Beatriz Santos'];
-  }, [user]);
+  }, []);
+  // Profissionais reais da clínica (tabela professionals); sem nomes inventados
+  const teamMembers = dbProfessionals.length > 0 ? dbProfessionals : localTeam;
 
-  const [professional, setProfessional] = useState(teamMembers[0] || 'Profissional');
+  const [professional, setProfessional] = useState(teamMembers[0] || '');
   const [clinicId, setClinicId] = useState(propClinicId || currentClinicId || clinics[0]?.id || '1');
 
   useEffect(() => {
@@ -97,6 +96,32 @@ export default function ScheduleModal({
       setProfessional(teamMembers[0]);
     }
   }, [teamMembers]);
+
+  // Carrega os profissionais da clínica escolhida
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    fetchProfessionalsFromDb(clinicId).then(list => {
+      if (!cancelled) setDbProfessionals(list.map(p => p.name));
+    });
+    return () => { cancelled = true; };
+  }, [isOpen, clinicId]);
+
+  // Vindo do botão "Agendar" da ficha do lead: preenche paciente, telefone, clínica e procedimento
+  useEffect(() => {
+    if (!isOpen) return;
+    try {
+      const raw = localStorage.getItem('crm_schedule_prefill');
+      if (!raw) return;
+      localStorage.removeItem('crm_schedule_prefill');
+      const pre = JSON.parse(raw);
+      if (pre.name) setPatient(pre.name);
+      if (pre.phone) setPhone(pre.phone);
+      if (pre.clinicId) setClinicId(pre.clinicId);
+      if (pre.procedure) setProcedure(pre.procedure);
+      if (pre.leadId) leadIdRef.current = pre.leadId;
+    } catch {}
+  }, [isOpen]);
 
   // Keyboard shortcut: ESC to close
   useEffect(() => {
@@ -140,7 +165,8 @@ export default function ScheduleModal({
     const clinicName = resolvedClinic ? resolvedClinic.name : (propClinicName || 'Unidade Principal');
 
     const newApt = {
-      id: 'apt_' + Date.now().toString(36),
+      id: isSupabaseConfigured() ? newUuid() : 'apt_' + Date.now().toString(36),
+      leadId: leadIdRef.current,
       patient: patient.trim(),
       phone: phone.trim(),
       date,
@@ -165,11 +191,15 @@ export default function ScheduleModal({
       } catch (e) {
         console.error(e);
       }
-      fetch('/api/appointments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newApt)
-      }).catch(console.error);
+      if (isSupabaseConfigured()) {
+        saveAppointmentsToDb([newApt as any]);
+      } else {
+        fetch('/api/appointments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newApt)
+        }).catch(console.error);
+      }
     }
 
     // Google Calendar Sync
@@ -376,15 +406,27 @@ export default function ScheduleModal({
                 <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest ml-1">
                   Profissional Responsável
                 </label>
-                <select 
-                  value={professional}
-                  onChange={e => setProfessional(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 text-sm focus:ring-2 focus:ring-blue-500 outline-none dark:text-white"
-                >
-                  {teamMembers.map((member, idx) => (
-                    <option key={idx} value={member}>{member}</option>
-                  ))}
-                </select>
+                {teamMembers.length > 0 ? (
+                  <select 
+                    value={professional}
+                    onChange={e => setProfessional(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 text-sm focus:ring-2 focus:ring-blue-500 outline-none dark:text-white"
+                  >
+                    {teamMembers.map((member, idx) => (
+                      <option key={idx} value={member}>{member}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <>
+                    <input
+                      value={professional}
+                      onChange={e => setProfessional(e.target.value)}
+                      placeholder="Nome do profissional"
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 text-sm focus:ring-2 focus:ring-blue-500 outline-none dark:text-white"
+                    />
+                    <p className="text-[10px] text-slate-400 ml-1">Esta clínica ainda não tem profissionais cadastrados. Cadastre em Equipe para aparecerem aqui.</p>
+                  </>
+                )}
               </div>
             </div>
 
