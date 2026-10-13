@@ -4,10 +4,10 @@ import { useApp } from '../../context/AppContext';
 import { useClinicDataset, statusBucket, phoneDigits } from '../../lib/supabase';
 import { cn } from '../../lib/utils';
 
-type Kind = 'missed' | 'rebook' | 'confirm';
-interface Suggestion { key: string; kind: Kind; patient: string; phone: string; date: string; time: string; professional: string; reason: string; tag?: string }
+export type Kind = 'missed' | 'rebook' | 'confirm';
+export interface Suggestion { key: string; kind: Kind; patient: string; phone: string; date: string; time: string; professional: string; reason: string; tag?: string }
 
-const KIND = {
+export const KIND = {
   missed: { label: 'Recuperar falta', icon: UserX, tone: 'text-rose-600 bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-900' },
   rebook: { label: 'Reagendar', icon: CalendarClock, tone: 'text-amber-700 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-900' },
   confirm: { label: 'Confirmar presença', icon: PhoneCall, tone: 'text-sky-700 bg-sky-50 dark:bg-sky-950/40 border-sky-200 dark:border-sky-900' }
@@ -19,14 +19,7 @@ const dayStr = (offset: number) => {
 };
 const br = (ymd: string) => ymd.split('-').reverse().slice(0, 2).join('/');
 
-/** Fila de follow-up gerada sozinha a partir da agenda do Clinicorp. */
-export default function ClinicorpSuggestions() {
-  const { currentClinicId } = useApp();
-  const { appointments, loading } = useClinicDataset(currentClinicId);
-  const [open, setOpen] = useState(true);
-  const [filter, setFilter] = useState<'all' | Kind>('all');
-
-  const items = useMemo<Suggestion[]>(() => {
+export function buildSuggestions(appointments: any[]): Suggestion[] {
     const today = dayStr(0), from = dayStr(-14), soon = dayStr(2);
     const nowHM = `${String(new Date().getHours()).padStart(2, '0')}:${String(new Date().getMinutes()).padStart(2, '0')}`;
     // consulta de hoje que já passou do horário não é mais "para confirmar"
@@ -54,21 +47,32 @@ export default function ClinicorpSuggestions() {
     const byPatient = new Map<string, Suggestion>();
     [...out.values()].sort((x, y) => y.date.localeCompare(x.date)).forEach(s => { const k = phoneDigits(s.phone).slice(-8) || s.patient; if (!byPatient.has(k)) byPatient.set(k, s); });
     return [...byPatient.values()].sort((x, y) => (x.kind === 'confirm' ? 0 : 1) - (y.kind === 'confirm' ? 0 : 1) || x.date.localeCompare(y.date));
-  }, [appointments]);
+}
+
+export const suggestionWhatsApp = (s: Suggestion) => {
+  const d = phoneDigits(s.phone);
+  if (!d) return undefined;
+  const num = d.startsWith('55') ? d : `55${d}`;
+  const msg = s.kind === 'confirm'
+    ? `Olá ${s.patient.split(' ')[0]}, tudo bem? Passando para confirmar sua consulta em ${br(s.date)} às ${s.time}. Podemos confirmar?`
+    : `Olá ${s.patient.split(' ')[0]}, tudo bem? Aqui é da clínica. Vamos encontrar um novo horário para a sua consulta?`;
+  return `https://wa.me/${num}?text=${encodeURIComponent(msg)}`;
+};
+
+/** Fila de follow-up gerada sozinha a partir da agenda do Clinicorp. */
+export default function ClinicorpSuggestions() {
+  const { currentClinicId } = useApp();
+  const { appointments, loading } = useClinicDataset(currentClinicId);
+  const [open, setOpen] = useState(true);
+  const [filter, setFilter] = useState<'all' | Kind>('all');
+
+  const items = useMemo<Suggestion[]>(() => buildSuggestions(appointments), [appointments]);
 
   const shown = items.filter(i => filter === 'all' || i.kind === filter);
   const count = (k: Kind) => items.filter(i => i.kind === k).length;
   if (loading || items.length === 0) return null;
 
-  const wa = (s: Suggestion) => {
-    const d = phoneDigits(s.phone);
-    if (!d) return undefined;
-    const num = d.startsWith('55') ? d : `55${d}`;
-    const msg = s.kind === 'confirm'
-      ? `Olá ${s.patient.split(' ')[0]}, tudo bem? Passando para confirmar sua consulta em ${br(s.date)} às ${s.time}. Podemos confirmar?`
-      : `Olá ${s.patient.split(' ')[0]}, tudo bem? Aqui é da clínica. Vamos encontrar um novo horário para a sua consulta?`;
-    return `https://wa.me/${num}?text=${encodeURIComponent(msg)}`;
-  };
+  const wa = suggestionWhatsApp;
 
   return (
     <section className="bg-[var(--color-surface-elevated)] rounded-[var(--radius-panel)] border border-[var(--color-border-default)] shadow-[var(--shadow-panel)] overflow-hidden">

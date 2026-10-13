@@ -54,6 +54,7 @@ import {
 } from '../../lib/syncQueue';
 import { createCalendarEvent, performBidirectionalSync } from '../../lib/googleCalendar';
 import { BOOKING_PROFESSIONAL } from '../../lib/bookingRule';
+import ReturnAlerts from './ReturnAlerts';
 import { isSupabaseConfigured, fetchAppointmentsFromDb, saveAppointmentsToDb, fetchProfessionalsFromDb, statusBucket } from '../../lib/supabase';
 import { buildGoogleEventFromAppointment, getCalendarFieldMapping } from '../../lib/googleCalendarMapping';
 import { getGoogleSyncSettings, recordSyncExecution } from '../../lib/googleSyncSettings';
@@ -1417,6 +1418,8 @@ export default function AppointmentsCalendar() {
             </div>
           </div>
 
+          <ReturnAlerts appointments={clinicAppointments} />
+
           {/* Status Color Legend & Filter */}
           <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
             <div className="flex items-center justify-between mb-3">
@@ -1916,7 +1919,7 @@ export default function AppointmentsCalendar() {
                                   height: h,
                                   left: `calc(${lane * (100 / lanes)}% + 3px)`,
                                   width: `calc(${wPct}% - 6px)`,
-                                  background: tint(catColor, 38),
+                                  background: tint(catColor, 28),
                                   borderLeft: `4px solid ${catColor}`,
                                   zIndex: 2
                                 }}
