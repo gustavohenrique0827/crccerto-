@@ -570,7 +570,7 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
                       <div className="flex items-center justify-between">
                         <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Período</label>
                         <select value={dateField} onChange={(e) => setDateField(e.target.value as any)} className="bg-transparent text-[10px] font-bold text-[var(--color-primary-blue)] outline-none cursor-pointer">
-                          <option value="createdAt">pela data de entrada (após 18h30 = dia seguinte)</option>
+                          <option value="createdAt">pela data de entrada (dia vai até 00h30)</option>
                           <option value="lastInteractionAt">pela última interação</option>
                         </select>
                       </div>

@@ -1026,15 +1026,15 @@ const dayKey = (offset: number) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-/** Depois deste horário (local), o lead conta como do dia seguinte. */
-export const DAY_CUTOFF_MINUTES = 18 * 60 + 30;
+/** O dia de atendimento termina às 00h30: leads entre 00h00 e 00h30 ainda contam no dia anterior. */
+export const DAY_END_MINUTES = 30;
 
-/** Dia de atendimento de um lead: chegou às 18h30 ou depois = dia seguinte. */
+/** Dia de atendimento de um lead (horário local). */
 export const businessDay = (iso?: string | null): string => {
   const t = String(iso || '');
   const d = new Date(t);
   if (!t || isNaN(d.getTime()) || /^\d{4}-\d{2}-\d{2}$/.test(t)) return localDay(t);
-  if (d.getHours() * 60 + d.getMinutes() >= DAY_CUTOFF_MINUTES) d.setDate(d.getDate() + 1);
+  d.setMinutes(d.getMinutes() - DAY_END_MINUTES);
   return localDay(d.toISOString());
 };
 
