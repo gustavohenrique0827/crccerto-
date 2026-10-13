@@ -499,9 +499,9 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
                     initial={{ opacity: 0, scale: 0.95, y: 5 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95, y: 5 }}
-                    className="absolute right-0 mt-2 w-[22rem] max-w-[92vw] max-h-[75vh] overflow-y-auto custom-scrollbar bg-[var(--color-surface-elevated)] border border-[var(--color-border-default)] rounded-[var(--radius-panel)] shadow-[var(--shadow-panel)] z-50 p-4 space-y-4 text-xs"
+                    className="fixed right-4 top-20 bottom-4 w-[22rem] max-w-[calc(100vw-2rem)] flex flex-col bg-[var(--color-surface-elevated)] border border-[var(--color-border-default)] rounded-[var(--radius-panel)] shadow-[var(--shadow-panel)] z-50 text-xs overflow-hidden"
                   >
-                    <div className="flex items-center justify-between border-b border-[var(--color-border-default)] pb-2">
+                    <div className="shrink-0 flex items-center justify-between border-b border-[var(--color-border-default)] px-4 py-3">
                       <div className="flex items-center gap-1.5 font-bold text-[var(--color-text-primary)]">
                         <Filter size={14} className="text-[var(--color-primary-blue)]" />
                         <span>Filtros do Pipeline</span>
@@ -516,6 +516,7 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
                       )}
                     </div>
 
+                    <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4 space-y-4">
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
                         Filtrar por Etapa
@@ -612,7 +613,9 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
                       <input type="text" placeholder="Ex.: implante" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} className="w-full px-2.5 py-1.5 bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] rounded-[var(--radius-control)] text-xs text-[var(--color-text-primary)] outline-none" />
                     </div>
 
-                    <div className="pt-2 border-t border-[var(--color-border-default)] flex items-center justify-between">
+                    </div>
+
+                    <div className="shrink-0 px-4 py-3 border-t border-[var(--color-border-default)] flex items-center justify-between">
                       <span className="text-[11px] font-semibold text-[var(--color-text-muted)]">
                         {filteredLeads.length} leads
                       </span>
