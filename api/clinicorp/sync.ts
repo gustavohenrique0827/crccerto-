@@ -36,9 +36,10 @@ const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const addDays = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return d; };
 
 /** Status a partir das etiquetas (tags) do agendamento no Clinicorp. */
-export function statusFromTags(tags: any[]): 'pending' | 'confirmed' | 'attended' | 'missed' | 'cancelled' {
+export function statusFromTags(tags: any[]): 'pending' | 'confirmed' | 'attended' | 'missed' | 'cancelled' | 'rescheduled' {
   const names = (tags || []).map(t => String(t?.Name || '').toLowerCase()).join(' | ');
   if (/cancel/.test(names)) return 'cancelled';
+  if (/reagendad|remarcar/.test(names)) return 'rescheduled';
   if (/falt|n[aã]o compareceu/.test(names)) return 'missed';
   if (/atendid|compareceu|chegou/.test(names)) return 'attended';
   if (/confirmad/.test(names)) return 'confirmed';
@@ -102,10 +103,12 @@ export default async function handler(req: Req, res: Res) {
       clinicorpGet('appointment/list', range)
     ]);
 
-    // "Agenda Fechada" e similares são bloqueios de horário, não pacientes
+    // "Agenda Fechada" e similares são horários bloqueados: ficam no banco como kind='blocked' (não são pacientes)
     const isPlaceholder = (name: string) => /^\s*(agenda\s+fechada|agendar\s+abert)/i.test(name || '');
-    const real = (apts as any[]).filter(a => a.CategoryDescription !== 'Agenda Fechada' && a.PatientName && !isPlaceholder(a.PatientName));
-    const blocked = (apts as any[]).length - real.length;
+    const isBlocked = (a: any) => a.CategoryDescription === 'Agenda Fechada' || isPlaceholder(a.PatientName);
+    const real = (apts as any[]).filter(a => !isBlocked(a) && a.PatientName);
+    const blockedList = (apts as any[]).filter(a => isBlocked(a));
+    const blocked = blockedList.length;
 
     const patientsById = new Map<string, any>();
     real.forEach(a => {
@@ -114,7 +117,7 @@ export default async function handler(req: Req, res: Res) {
     });
 
     if (dryRun) {
-      return res.status(200).json({ ok: true, dryRun: true, range, professionals: pros.length, patients: patientsById.size, appointments: real.length, skippedBlocked: blocked });
+      return res.status(200).json({ ok: true, dryRun: true, range, professionals: pros.length, patients: patientsById.size, appointments: real.length, blockedSlots: blocked, tags: new Set((apts as any[]).flatMap(a => (a.tags || []).map((t: any) => String(t.Name || '').trim()))).size });
     }
 
     // 1) profissionais
@@ -135,31 +138,56 @@ export default async function handler(req: Req, res: Res) {
 
     // 3) agendamentos
     const proName = new Map((pros as any[]).map(p => [String(p.id), p.name]));
-    const aptRows = real.map(a => ({
+    const buildRow = (a: any, kind: 'appointment' | 'blocked') => ({
       clinic_id: clinicId,
       clinicorp_id: String(a.id),
-      patient_id: patMap.get(String(a.Patient_PersonId)) || null,
+      patient_id: kind === 'appointment' ? (patMap.get(String(a.Patient_PersonId)) || null) : null,
       professional_id: proMap.get(String(a.Dentist_PersonId)) || null,
-      patient_name: a.PatientName,
-      patient_phone: a.MobilePhone || '',
-      procedure_name: a.Procedures || a.CategoryDescription || 'Consulta',
+      patient_name: kind === 'appointment' ? a.PatientName : 'Agenda fechada',
+      patient_phone: kind === 'appointment' ? (a.MobilePhone || '') : '',
+      procedure_name: kind === 'appointment' ? (a.Procedures || a.CategoryDescription || 'Consulta') : (a.Notes || a.Name || 'Horário bloqueado'),
       professional_name: proName.get(String(a.Dentist_PersonId)) || null,
       appointment_date: atomicToDate(a.AtomicDate),
       start_time: a.fromTime,
       end_time: a.toTime,
       duration_minutes: minutesBetween(a.fromTime, a.toTime),
-      status: a.Deleted ? 'cancelled' : statusFromTags(a.tags),
+      status: kind === 'blocked' ? 'pending' : (a.Deleted ? 'cancelled' : statusFromTags(a.tags)),
       notes: a.Notes || null,
       booked_at: a.CreateDate || null,
       booked_by: (a.CreateUserName || '').trim() || null,
-      source: 'clinicorp'
-    }));
+      source: 'clinicorp',
+      kind,
+      category: (a.CategoryDescription || '').trim() || null,
+      category_color: a.CategoryColor || null,
+      tags: (a.tags || []).map((t: any) => ({ name: String(t.Name || '').trim(), color: t.Color || null, type: t.Type || null })),
+      clinicorp_raw: {
+        procedures: a.SelectedProceduresList || null, alert: a.AlertInfo || null, email: a.Email || null,
+        patientConfirm: a.PatientConfirm || null, patientMessage: a.PatientMessage || null,
+        whatsDelivered: a.WhatsConfimationDelivered || null, whatsRead: a.WhatsConfimationRead || null,
+        firstAppointment: a.FirstAppointment || null, howDidMeet: a.HowDidMeet || null,
+        checkin: a.CheckinTime || null, waitStart: a.WaitStart || null, waitEnds: a.WaitEnds || null,
+        statusId: a.StatusId || null, statusColor: a.StatusColor || null,
+        modifiedDate: a.ModifiedDate || null, editedBy: a.EditedBy || null, isNew: a.isNew || null
+      }
+    });
+    const aptRows = [...real.map(a => buildRow(a, 'appointment')), ...blockedList.map(a => buildRow(a, 'blocked'))];
+    let missingColumns = false;
+    const NEW_COLS = ['kind', 'category', 'category_color', 'tags', 'clinicorp_raw'];
     for (let i = 0; i < aptRows.length; i += 200) {
-      const { error } = await sb.from('appointments').upsert(aptRows.slice(i, i + 200), { onConflict: 'clinic_id,clinicorp_id' });
+      let chunk: any[] = aptRows.slice(i, i + 200);
+      if (missingColumns) chunk = chunk.filter(r => r.kind === 'appointment').map(r => { const c = { ...r }; NEW_COLS.forEach(k => delete c[k]); return c; });
+      let { error } = await sb.from('appointments').upsert(chunk, { onConflict: 'clinic_id,clinicorp_id' });
+      if (error && /column|schema cache/i.test(error.message) && !missingColumns) {
+        // migration das etiquetas ainda não foi rodada: grava o essencial e avisa
+        missingColumns = true;
+        chunk = chunk.filter(r => r.kind === 'appointment').map(r => { const c = { ...r }; NEW_COLS.forEach(k => delete c[k]); return c; });
+        ({ error } = await sb.from('appointments').upsert(chunk, { onConflict: 'clinic_id,clinicorp_id' }));
+      }
       if (error) throw new Error(`appointments: ${error.message}`);
     }
 
-    return res.status(200).json({ ok: true, range, professionals: pros.length, patients: patientsById.size, appointments: aptRows.length, skippedBlocked: blocked });
+    return res.status(200).json({ ok: true, range, professionals: pros.length, patients: patientsById.size, appointments: real.length, blockedSlots: blocked, tags: new Set(aptRows.flatMap((r: any) => (r.tags || []).map((t: any) => t.name))).size,
+      warning: missingColumns ? 'Etiquetas, categorias e horários bloqueados NÃO foram gravados: rode no Supabase o arquivo 20261014_appointment_clinicorp_full.sql e sincronize de novo.' : undefined });
   } catch (e: any) {
     return fail(res, 502, e?.message || 'Falha ao sincronizar com o Clinicorp.');
   }

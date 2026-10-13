@@ -8,8 +8,8 @@ export const BOOKING_CREATED_BY = ['ainoa', 'aino'];  // trechos do nome de quem
 
 const norm = (v?: string | null) => String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
-export function matchesBookingRule(a: { professional_name?: string | null; booked_by?: string | null; status?: string | null }): boolean {
-  if (a.status === 'cancelled') return false;
+export function matchesBookingRule(a: { professional_name?: string | null; booked_by?: string | null; status?: string | null; kind?: string | null }): boolean {
+  if (a.status === 'cancelled' || a.kind === 'blocked') return false;
   if (!norm(a.professional_name).includes(BOOKING_PROFESSIONAL)) return false;
   if (BOOKING_CREATED_BY.length === 0) return true;
   const by = norm(a.booked_by);

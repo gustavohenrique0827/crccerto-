@@ -8,6 +8,9 @@ export interface ClinicorpSyncResult {
   patients?: number;
   appointments?: number;
   skippedBlocked?: number;
+  blockedSlots?: number;
+  tags?: number;
+  warning?: string;
   range?: { from: string; to: string };
 }
 

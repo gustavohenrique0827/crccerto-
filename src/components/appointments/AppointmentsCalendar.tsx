@@ -76,6 +76,33 @@ export interface Appointment {
   googleSyncError?: string;
   lastSyncedAt?: string;
   source?: 'crm' | 'google_calendar';
+  /** Dados vindos do Clinicorp */
+  kind?: 'appointment' | 'blocked';
+  category?: string;
+  categoryColor?: string;
+  tags?: { name: string; color?: string | null }[];
+  bookedBy?: string;
+  bookedAt?: string;
+  clinicorp?: any;
+}
+
+function TagChips({ tags, max = 3, size = 'sm' }: { tags?: { name: string; color?: string | null }[]; max?: number; size?: 'xs' | 'sm' }) {
+  const list = (tags || []).filter(t => t.name);
+  if (list.length === 0) return null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      {list.slice(0, max).map(t => (
+        <span
+          key={t.name}
+          className={cn("inline-flex items-center gap-1 rounded-full border font-bold text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-800/70", size === 'xs' ? "px-1.5 py-0 text-[9px]" : "px-2 py-0.5 text-[10px]")}
+        >
+          <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: t.color || '#94a3b8' }} />
+          {t.name}
+        </span>
+      ))}
+      {list.length > max && <span className="text-[10px] font-bold text-slate-400">+{list.length - max}</span>}
+    </span>
+  );
 }
 
 const HOUR_PX = 72; // altura de 1 hora na visão semanal
@@ -205,6 +232,7 @@ export default function AppointmentsCalendar() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProfessional, setSelectedProfessional] = useState<string>('Todos');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>('Todos');
+  const [selectedTag, setSelectedTag] = useState<string>('Todas');
   const [selectedAppointmentDetail, setSelectedAppointmentDetail] = useState<Appointment | null>(null);
 
   // Admin permission check: only administrators can switch or filter by clinic
@@ -755,17 +783,22 @@ export default function AppointmentsCalendar() {
   // Data Isolation by Clinic:
   // Strictly isolate appointments by clinicId.
   // Only administrators can view all clinics ('all'). Non-admins strictly see only their clinic.
-  const clinicAppointments = useMemo(() => {
-    return appointments.filter(a => {
-      if (isAdmin && effectiveClinicId === 'all') return true;
-      return (a.clinicId || '1') === effectiveClinicId;
-    });
-  }, [appointments, effectiveClinicId, isAdmin]);
+  const inClinic = (a: Appointment) => (isAdmin && effectiveClinicId === 'all') || (a.clinicId || '1') === effectiveClinicId;
+  // Horários bloqueados ("Agenda Fechada") não são pacientes: ficam fora de contagens, listas e conflitos
+  const clinicAppointments = useMemo(
+    () => appointments.filter(a => a.kind !== 'blocked' && inClinic(a)),
+    [appointments, effectiveClinicId, isAdmin]
+  );
+  const blockedSlots = useMemo(
+    () => appointments.filter(a => a.kind === 'blocked' && inClinic(a)),
+    [appointments, effectiveClinicId, isAdmin]
+  );
 
   const filteredAppointments = useMemo(() => {
     return clinicAppointments.filter(a => {
       const matchesProfessional = selectedProfessional === 'Todos' || a.professional === selectedProfessional;
       const matchesStatus = selectedStatusFilter === 'Todos' || a.status === selectedStatusFilter;
+      const matchesTag = selectedTag === 'Todas' || (a.tags || []).some(t => t.name === selectedTag);
       const matchesSearch = (a.patient && a.patient.toLowerCase().includes(searchTerm.toLowerCase())) || 
                            (a.procedure && a.procedure.toLowerCase().includes(searchTerm.toLowerCase())) ||
                            (a.phone && a.phone.includes(searchTerm)) ||
@@ -776,7 +809,7 @@ export default function AppointmentsCalendar() {
         matchesRange = a.date >= customStartDate && a.date <= customEndDate;
       }
 
-      return matchesProfessional && matchesStatus && matchesSearch && matchesRange;
+      return matchesProfessional && matchesStatus && matchesTag && matchesSearch && matchesRange;
     }).sort((a, b) => {
       if (viewMode === 'custom') {
         const timeA = `${a.date} ${a.time}`;
@@ -785,7 +818,7 @@ export default function AppointmentsCalendar() {
       }
       return 0;
     });
-  }, [clinicAppointments, selectedProfessional, selectedStatusFilter, searchTerm, viewMode, customStartDate, customEndDate, customSortOrder]);
+  }, [clinicAppointments, selectedProfessional, selectedStatusFilter, selectedTag, searchTerm, viewMode, customStartDate, customEndDate, customSortOrder]);
 
   // Group appointments by date for custom view
   const customAppointmentsByDate = useMemo(() => {
@@ -803,6 +836,13 @@ export default function AppointmentsCalendar() {
   // Conflict Detection Engine for Google Sync & Local Overlaps (scoped to current isolated clinic)
   const conflictMap = useMemo(() => {
     return detectAppointmentConflicts(clinicAppointments);
+  }, [clinicAppointments]);
+
+  // Etiquetas existentes na agenda (para o filtro), com a cor que o Clinicorp usa
+  const tagOptions = useMemo(() => {
+    const m = new Map<string, { color?: string | null; n: number }>();
+    clinicAppointments.forEach(a => (a.tags || []).forEach(t => { const e = m.get(t.name) || { color: t.color, n: 0 }; e.n++; m.set(t.name, e); }));
+    return Array.from(m, ([name, v]) => ({ name, ...v })).sort((x, y) => y.n - x.n);
   }, [clinicAppointments]);
 
   const totalConflicts = useMemo(() => {
@@ -1032,6 +1072,17 @@ export default function AppointmentsCalendar() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          {tagOptions.length > 0 && (
+            <select
+              value={selectedTag}
+              onChange={e => setSelectedTag(e.target.value)}
+              title="Filtrar pela etiqueta do Clinicorp"
+              className="px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 outline-none cursor-pointer"
+            >
+              <option value="Todas">Todas as etiquetas</option>
+              {tagOptions.map(t => <option key={t.name} value={t.name}>{t.name} ({t.n})</option>)}
+            </select>
+          )}
           {/* Visual Conflict Summary Badge */}
           {visibleConflicts > 0 && (
             <div 
@@ -1558,6 +1609,27 @@ export default function AppointmentsCalendar() {
                               <div className="absolute inset-x-0 border-t-2 border-rose-500 z-20 pointer-events-none" style={{ top: ((nowMin - gridStart * 60) / 60) * HOUR_PX }} />
                             )}
 
+                            {blockedSlots.filter(bs => bs.date === dateStr && (selectedProfessional === 'Todos' || bs.professional === selectedProfessional)).map(bs => {
+                              const bStart = timeToMinutes(bs.time);
+                              const bEnd = bStart + Math.max(Number(bs.duration) || 30, 15);
+                              return (
+                                <div
+                                  key={bs.id}
+                                  title={`Agenda fechada${bs.professional ? ` · ${bs.professional}` : ''}: ${bs.time}–${minutesToTime(bEnd)}${bs.procedure && bs.procedure !== 'Horário bloqueado' ? ` · ${bs.procedure}` : ''}`}
+                                  className="absolute inset-x-0 pointer-events-none"
+                                  style={{
+                                    top: ((bStart - gridStart * 60) / 60) * HOUR_PX,
+                                    height: ((bEnd - bStart) / 60) * HOUR_PX,
+                                    background: 'repeating-linear-gradient(135deg, rgba(100,116,139,0.10) 0 6px, transparent 6px 12px)',
+                                    borderTop: '1px dashed rgba(100,116,139,0.35)',
+                                    zIndex: 0
+                                  }}
+                                >
+                                  <span className="absolute right-1 top-0.5 text-[8px] font-bold uppercase tracking-wider text-slate-400/80 bg-white/70 dark:bg-slate-900/70 px-1 rounded">Fechada</span>
+                                </div>
+                              );
+                            })}
+
                             {dayApts.map(({ apt, start, end, realEnd, lane, lanes, span }) => {
                               const conf = STATUS_CONFIG[apt.status] || STATUS_CONFIG.pending;
                               const conflictInfo = conflictMap.get(apt.id);
@@ -1577,7 +1649,7 @@ export default function AppointmentsCalendar() {
                                     e.stopPropagation();
                                     setSelectedAppointmentDetail(apt);
                                   }}
-                                  title={`${apt.time} – ${minutesToTime(realEnd)} · ${apt.patient} · ${apt.procedure}${apt.professional ? ` · ${apt.professional}` : ''}`}
+                                  title={`${apt.time} – ${minutesToTime(realEnd)} · ${apt.patient} · ${apt.procedure}${apt.professional ? ` · ${apt.professional}` : ''}${(apt.tags || []).length ? ` · ${(apt.tags || []).map(t => t.name).join(', ')}` : ''}`}
                                   className={cn(
                                     "appointment-card absolute rounded-lg border-l-4 shadow-2xs overflow-hidden px-1.5 py-1 cursor-pointer hover:shadow-md hover:z-10 transition-shadow",
                                     hasConflict && "ring-1 ring-rose-500",
@@ -1619,6 +1691,7 @@ export default function AppointmentsCalendar() {
                                       </div>
                                       <h4 className="text-[11px] font-bold text-slate-900 dark:text-white mt-0.5 truncate leading-tight">{compact ? String(apt.patient).split(' ')[0] : apt.patient}</h4>
                                       {height >= 56 && <p className="text-[9.5px] text-slate-500 dark:text-slate-400 truncate leading-tight">{apt.procedure}</p>}
+                                  {height >= 84 && widthPct >= 50 && <div className="mt-0.5"><TagChips tags={apt.tags} max={2} size="xs" /></div>}
                                       {height >= 76 && apt.professional && (
                                         <div className="flex items-center gap-1 text-[8.5px] text-slate-400 mt-0.5 truncate">
                                           <Stethoscope size={9} className="shrink-0" />
@@ -1829,6 +1902,26 @@ export default function AppointmentsCalendar() {
                             <div className="absolute inset-x-0 border-t-2 border-rose-500 z-20 pointer-events-none" style={{ top: ((nowMin - gridStart * 60) / 60) * HOUR_PX }} />
                           )}
 
+                          {blockedSlots.filter(bs => bs.date === dateStr && (bs.professional || 'Sem profissional') === pn).map(bs => {
+                            const bStart = timeToMinutes(bs.time);
+                            const bEnd = bStart + Math.max(Number(bs.duration) || 30, 15);
+                            return (
+                              <div
+                                key={bs.id}
+                                title={`Agenda fechada: ${bs.time}–${minutesToTime(bEnd)}`}
+                                className="absolute inset-x-0 pointer-events-none"
+                                style={{
+                                  top: ((bStart - gridStart * 60) / 60) * HOUR_PX,
+                                  height: ((bEnd - bStart) / 60) * HOUR_PX,
+                                  background: 'repeating-linear-gradient(135deg, rgba(100,116,139,0.10) 0 6px, transparent 6px 12px)',
+                                  borderTop: '1px dashed rgba(100,116,139,0.35)'
+                                }}
+                              >
+                                <span className="absolute right-1 top-0.5 text-[8px] font-bold uppercase tracking-wider text-slate-400/80">Fechada</span>
+                              </div>
+                            );
+                          })}
+
                           {colApts.map(({ apt, start, end, realEnd, lane, lanes, span }) => {
                             const conf = STATUS_CONFIG[apt.status] || STATUS_CONFIG.pending;
                             const hasConflict = conflictMap.get(apt.id)?.hasConflict;
@@ -1861,6 +1954,7 @@ export default function AppointmentsCalendar() {
                                 </div>
                                 <h4 className="text-xs font-bold text-slate-900 dark:text-white mt-0.5 truncate leading-tight">{apt.patient}</h4>
                                 {height >= 52 && <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate leading-tight">{apt.procedure}</p>}
+                                {height >= 80 && <div className="mt-0.5"><TagChips tags={apt.tags} max={2} size="xs" /></div>}
                                 {height >= 72 && apt.phone && <p className="text-[10px] text-slate-400 truncate font-mono">{apt.phone}</p>}
                               </div>
                             );
@@ -1913,7 +2007,8 @@ export default function AppointmentsCalendar() {
                               </div>
                               <div className="min-w-0 flex-1">
                                 <p className={cn("text-sm font-bold text-slate-900 dark:text-white truncate", apt.status === 'cancelled' && "line-through")}>{apt.patient}</p>
-                                <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{apt.procedure}{apt.phone ? ` · ${apt.phone}` : ''}</p>
+                                <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{apt.category && apt.category !== apt.procedure ? `${apt.category} · ` : ''}{apt.procedure}{apt.phone ? ` · ${apt.phone}` : ''}</p>
+                                <TagChips tags={apt.tags} size="xs" />
                               </div>
                               <div className="hidden md:flex items-center gap-1.5 w-44 shrink-0 text-xs text-slate-600 dark:text-slate-300">
                                 <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: pc.border }} />
@@ -2498,6 +2593,25 @@ export default function AppointmentsCalendar() {
                     <p className="text-slate-400">{selectedAppointmentDetail.phone || '(11) 99999-9999'}</p>
                   </div>
                 </div>
+
+                {((selectedAppointmentDetail.tags || []).length > 0 || selectedAppointmentDetail.category || selectedAppointmentDetail.bookedBy) && (
+                  <div className="p-3 bg-slate-50 dark:bg-slate-800/30 rounded-xl space-y-2">
+                    {selectedAppointmentDetail.category && (
+                      <p className="flex items-center gap-2 text-slate-700 dark:text-slate-200 font-bold">
+                        <span className="w-2.5 h-2.5 rounded-full" style={{ background: selectedAppointmentDetail.categoryColor || '#94a3b8' }} />
+                        {selectedAppointmentDetail.category}
+                      </p>
+                    )}
+                    <TagChips tags={selectedAppointmentDetail.tags} max={10} />
+                    {selectedAppointmentDetail.bookedBy && (
+                      <p className="text-[11px] text-slate-400">
+                        Agendado por <strong className="text-slate-600 dark:text-slate-300">{selectedAppointmentDetail.bookedBy}</strong>
+                        {selectedAppointmentDetail.bookedAt ? ` em ${new Date(selectedAppointmentDetail.bookedAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
+                      </p>
+                    )}
+                    {selectedAppointmentDetail.clinicorp?.whatsRead && <p className="text-[11px] text-emerald-600">Confirmação por WhatsApp lida pelo paciente</p>}
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="p-3 bg-slate-50 dark:bg-slate-800/30 rounded-xl">

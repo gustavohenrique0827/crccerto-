@@ -852,7 +852,14 @@ export function rowToAppointment(r: any) {
     notes: r.notes || '',
     googleSyncStatus: r.google_sync_status || undefined,
     googleEventId: r.google_event_id || undefined,
-    source: (r.source === 'google_calendar' ? 'google_calendar' : 'crm') as 'crm' | 'google_calendar'
+    source: (r.source === 'google_calendar' ? 'google_calendar' : 'crm') as 'crm' | 'google_calendar',
+    kind: (r.kind === 'blocked' ? 'blocked' : 'appointment') as 'appointment' | 'blocked',
+    category: r.category || undefined,
+    categoryColor: r.category_color || undefined,
+    tags: (Array.isArray(r.tags) ? r.tags : []) as { name: string; color?: string | null }[],
+    bookedBy: r.booked_by || undefined,
+    bookedAt: r.booked_at || undefined,
+    clinicorp: r.clinicorp_raw || undefined
   };
 }
 
@@ -938,6 +945,7 @@ export async function insertProfessionalInDb(p: { clinicId: string; name: string
 // Agendamentos / métricas
 // ---------------------------------------------------------------------
 
+let hasKindCol = true; // false enquanto a migration de etiquetas/horários bloqueados não foi rodada
 let hasBookingCols = true; // vira false se a migration das colunas booked_at/booked_by ainda não foi rodada
 
 async function loadAppointments(clinicId?: string): Promise<any[]> {
@@ -947,10 +955,14 @@ async function loadAppointments(clinicId?: string): Promise<any[]> {
       const probe = await sb.from('appointments').select('booked_at').limit(1);
       if (probe.error) hasBookingCols = false;
     }
+    if (hasKindCol) {
+      const probe = await sb.from('appointments').select('kind').limit(1);
+      if (probe.error) hasKindCol = false;
+    }
     // O Supabase devolve no máximo 1000 linhas por consulta: lê em páginas até acabar
     try {
       return await fetchAllRows((a, b) => {
-        let q = sb.from('appointments').select(`id,status,appointment_date,clinic_id,professional_name${hasBookingCols ? ',booked_at,booked_by' : ''}`).order('id').range(a, b);
+        let q = sb.from('appointments').select(`id,status,appointment_date,clinic_id,professional_name${hasBookingCols ? ',booked_at,booked_by' : ''}${hasKindCol ? ',kind' : ''}`).order('id').range(a, b);
         if (clinicId && clinicId !== 'all') q = q.eq('clinic_id', clinicId);
         return q;
       });
@@ -1150,7 +1162,8 @@ export function useSupabaseDashboardStats(clinicId?: string, range?: string) {
       try {
         const started = performance.now();
         const sb = getSupabase();
-        const [allLeads, aptsAll] = await Promise.all([fetchLeadsFromDb(clinicId), loadAppointments(clinicId)]);
+        const [allLeads, aptsAllRaw] = await Promise.all([fetchLeadsFromDb(clinicId), loadAppointments(clinicId)]);
+        const aptsAll = aptsAllRaw.filter(a => a.kind !== 'blocked'); // horários bloqueados não são atendimentos
 
         // Período escolhido no topo do dashboard (leads pela data de entrada, consultas pela data da consulta)
         const [rangeFrom, rangeTo] = rangeBounds(range);
