@@ -37,7 +37,6 @@ function typeOf(a: Apt): TypeKey {
 }
 
 const ROW = 40; // altura de 15 minutos: cards de 30 min já têm 80px e mostram tudo
-const LANE_MIN = 210; // largura mínima de cada card quando há atendimentos simultâneos
 const DAY_START = 7;
 const DAY_END = 21;
 const WEEKDAYS = ['DOM.', 'SEG.', 'TER.', 'QUA.', 'QUI.', 'SEX.', 'SÁB.'];
@@ -106,35 +105,35 @@ function AptCard({ p, conflict, conflictNames, showPro, onOpen }: {
       type="button"
       onClick={(e) => { e.stopPropagation(); onOpen(); }}
       title={`${range} · ${apt.patient} · ${kind || ''}${apt.professional ? ` · ${apt.professional}` : ''}`}
-      className={cn('agenda-card absolute text-left rounded-xl overflow-hidden text-slate-900 shadow-sm hover:shadow-xl hover:z-30 transition-shadow cursor-pointer border border-black/10', conflict && 'ring-2 ring-rose-500')}
+      className={cn('agenda-card @container absolute text-left rounded-xl overflow-hidden text-slate-900 shadow-sm hover:shadow-xl hover:z-30 transition-shadow cursor-pointer border border-black/10', conflict && 'ring-2 ring-rose-500')}
       style={{
         top: 0, height: Math.max(height, 36),
         left: `calc(${(p.lane * 100) / p.lanes}% + 3px)`, width: `calc(${100 / p.lanes}% - 6px)`,
         background: bg, zIndex: 2
       }}
     >
-      <div className="h-full px-2.5 py-1.5 flex flex-col gap-0.5">
+      <div className="h-full px-2 py-1.5 flex flex-col gap-0.5">
         {height < 56 ? (
-          <div className="flex items-center gap-2 h-full">
-            <span className="text-[12px] font-semibold opacity-80 shrink-0">{apt.time}</span>
-            <span className={cn('text-[14px] font-extrabold leading-tight break-words', cancelled && 'line-through')}>{apt.patient}</span>
-            <span className="ml-auto shrink-0"><StatusIcon apt={apt} conflict={conflict} /></span>
+          <div className="flex items-center gap-1.5 h-full">
+            <span className="text-[11.5px] font-semibold opacity-80 shrink-0">{apt.time}</span>
+            <span className={cn('text-[13px] font-extrabold leading-tight break-words min-w-0', cancelled && 'line-through')}>{apt.patient}</span>
+            <span className="ml-auto shrink-0"><StatusIcon apt={apt} conflict={conflict} size={14} /></span>
           </div>
         ) : (
           <>
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[12px] font-bold opacity-85">{range}</span>
-              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/55 text-[10.5px] font-bold shrink-0">
-                <StatusIcon apt={apt} conflict={conflict} size={13} />{conflict ? 'Conflito' : STATUS_LABEL[bucket]}
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-[11.5px] font-bold opacity-85 whitespace-nowrap"><span className="hidden @min-[150px]:inline">{range}</span><span className="@min-[150px]:hidden">{apt.time}</span></span>
+              <span className="flex items-center gap-1 px-1 py-0.5 rounded-md bg-white/55 text-[10.5px] font-bold shrink-0">
+                <StatusIcon apt={apt} conflict={conflict} size={13} /><span className="hidden @min-[190px]:inline">{conflict ? 'Conflito' : STATUS_LABEL[bucket]}</span>
               </span>
             </div>
-            <span className={cn('text-[15px] font-extrabold leading-tight break-words', cancelled && 'line-through')}>{apt.patient}</span>
-            {kind && <span className="text-[12px] font-semibold opacity-80 leading-tight break-words">{kind}{apt.procedure && apt.category && apt.procedure !== apt.category ? ` · ${apt.procedure}` : ''}</span>}
+            <span className={cn('text-[13.5px] font-extrabold leading-tight break-words', cancelled && 'line-through')}>{apt.patient}</span>
+            {kind && <span className="text-[11.5px] font-semibold opacity-80 leading-tight break-words">{kind}<span className="hidden @min-[190px]:inline">{apt.procedure && apt.category && apt.procedure !== apt.category ? ` · ${apt.procedure}` : ''}</span></span>}
             {height >= 100 && showPro && apt.professional && (
-              <span className="flex items-center gap-1.5 text-[11.5px] opacity-80 leading-tight"><Stethoscope size={12} className="shrink-0" />{apt.professional}</span>
+              <span className="hidden @min-[150px]:flex items-center gap-1.5 text-[11px] opacity-80 leading-tight"><Stethoscope size={12} className="shrink-0" />{apt.professional}</span>
             )}
             {height >= 120 && apt.phone && (
-              <span className="flex items-center gap-1.5 text-[11.5px] opacity-80 leading-tight"><Phone size={12} className="shrink-0" />{formatPhoneBR(apt.phone)}</span>
+              <span className="hidden @min-[150px]:flex items-center gap-1.5 text-[11px] opacity-80 leading-tight"><Phone size={12} className="shrink-0" />{formatPhoneBR(apt.phone)}</span>
             )}
             {height >= 150 && tags.length > 0 && (
               <span className="flex flex-wrap gap-1 mt-0.5">
@@ -218,17 +217,14 @@ export default function AgendaPage() {
   const last = colApts.length ? Math.max(DAY_END, Math.ceil(Math.max(...colApts.map(a => toMin(a.time) + a.duration)) / 60)) : DAY_END;
   const rows = (last - first) * 4;
 
-  // Cada coluna cresce conforme o número de atendimentos simultâneos, para o card nunca ficar espremido
+  // Os dias dividem a largura da tela por igual: a semana inteira cabe sem rolagem horizontal
   const placedByDay = useMemo(() => {
     const m = new Map<string, Placed[]>();
     columns.forEach(d => m.set(ymd(d), layout(real.filter(a => a.date === ymd(d)))));
     return m;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [real, view, date.getTime()]);
-  const colTemplate = columns.map(d => {
-    const lanes = Math.max(1, ...(placedByDay.get(ymd(d)) || []).map(p => p.lanes));
-    return `minmax(${Math.max(view === 'day' ? 320 : 230, lanes * LANE_MIN)}px, 1fr)`;
-  }).join(' ');
+  const colTemplate = `repeat(${columns.length}, minmax(0, 1fr))`;
 
   useEffect(() => {
     if ((view !== 'week' && view !== 'day') || !scrollRef.current) return;
@@ -264,7 +260,7 @@ export default function AgendaPage() {
   return (
     <div className="flex flex-col gap-2 h-full w-full" style={{ minHeight: 520 }}>
       {/* Barra única: navegação, visões, profissional, busca e novo agendamento */}
-      <div className="shrink-0 flex flex-wrap items-center gap-2.5 px-4 py-2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+      <div className="shrink-0 flex flex-wrap items-center gap-2 px-3 py-2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
         <h1 className="text-lg font-extrabold text-slate-900 dark:text-white mr-1">Agenda</h1>
         <button onClick={() => setDate(new Date())} className={cn(field, 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700')}>Hoje</button>
         <div className="flex items-center rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
@@ -282,12 +278,12 @@ export default function AgendaPage() {
           {professionals.map(p => <option key={p} value={p}>{p}</option>)}
         </select>
         <div className="flex-1" />
-        <div className="relative w-44 xl:w-60">
+        <div className="relative w-36 xl:w-56">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar paciente..." className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs outline-none focus:ring-2 focus:ring-violet-500 dark:text-white" />
         </div>
-        <button onClick={() => setSchedule({})} className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-sm font-bold shadow-md cursor-pointer">
-          <Plus size={16} /> Novo agendamento
+        <button onClick={() => setSchedule({})} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold shadow-md cursor-pointer whitespace-nowrap">
+          <Plus size={15} /> Novo agendamento
         </button>
       </div>
 
@@ -296,8 +292,8 @@ export default function AgendaPage() {
         {loading && <div className="flex-1 flex items-center justify-center text-sm text-slate-400">Carregando agenda…</div>}
 
         {!loading && (view === 'week' || view === 'day') && (
-          <div ref={scrollRef} className="flex-1 overflow-auto custom-scrollbar">
-            <div className="grid" style={{ gridTemplateColumns: `72px ${colTemplate}`, minWidth: '100%' }}>
+          <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar">
+            <div className="grid" style={{ gridTemplateColumns: `56px ${colTemplate}` }}>
               {/* Cabeçalho (fixo no topo) */}
               <div className="sticky top-0 left-0 z-40 flex items-center justify-center text-[11px] font-extrabold tracking-wider text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">HORÁRIO</div>
               {columns.map(d => {
