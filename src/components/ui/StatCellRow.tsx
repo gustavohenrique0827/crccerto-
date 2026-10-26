@@ -25,7 +25,7 @@ export function StatCellRow({ stats, cols = 4, className }: StatCellRowProps) {
   };
 
   const toneColorMap = {
-    neutral: 'text-[var(--color-text-primary)]',
+    neutral: 'text-[var(--color-text-muted)]',
     success: 'text-[var(--color-success)]',
     warning: 'text-[var(--color-warning)]',
     danger: 'text-[var(--color-danger)]',
@@ -43,13 +43,13 @@ export function StatCellRow({ stats, cols = 4, className }: StatCellRowProps) {
                 {item.label}
               </span>
               {item.icon && (
-                <div className="text-[var(--color-text-faint)] shrink-0">
+                <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-current/10", toneClass)}>
                   {item.icon}
                 </div>
               )}
             </div>
 
-            <div className={cn("text-2xl font-semibold tabular-nums tracking-tight", toneClass)}>
+            <div className="font-display text-4xl font-semibold tabular-nums tracking-tight text-[var(--color-text-primary)] leading-none pt-1">
               {item.value}
             </div>
 

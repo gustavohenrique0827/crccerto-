@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Users, 
   UserPlus, 
@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '@/src/context/AppContext';
 import { exportToCSV } from '@/src/lib/exportUtils';
+import { fetchProfilesFromDb, insertProfessionalInDb, isSupabaseConfigured } from '@/src/lib/supabase';
 
 interface TeamMember {
   id: string;
@@ -28,7 +29,17 @@ interface TeamMember {
   password?: string;
   status: 'Ativo' | 'Inativo' | 'Pendente';
   clinic: string;
+  fromDb?: boolean;
 }
+
+const DB_ROLE_LABEL: Record<string, string> = {
+  super_admin: 'Administrador da Rede',
+  admin: 'Administrador',
+  professional: 'Dentista / Especialista',
+  receptionist: 'Recepcionista / CRC',
+  marketing: 'Marketing',
+  user: 'Usuário'
+};
 
 export default function TeamManagement() {
   const { user, clinics, currentClinic, addToast } = useApp();
@@ -64,10 +75,37 @@ export default function TeamManagement() {
     clinic: clinics[0]?.name || 'Todas as Unidades'
   });
 
+  // Usuários reais do Supabase (donos da rede etc.), sempre vindos do banco
+  useEffect(() => {
+    let cancelled = false;
+    fetchProfilesFromDb().then(profiles => {
+      if (cancelled || !profiles) return;
+      const fromDb: TeamMember[] = profiles.map(p => {
+        const network = p.role === 'super_admin' || p.accessibleClinicIds.length === 0;
+        const names = p.accessibleClinicIds.map(id => clinics.find(c => c.id === id)?.name).filter(Boolean);
+        return {
+          id: p.id,
+          name: p.fullName,
+          email: p.email,
+          role: DB_ROLE_LABEL[p.role] || p.role,
+          status: p.isActive ? 'Ativo' : 'Inativo',
+          clinic: network ? 'Todas as Unidades' : names.join(', ') || 'Todas as Unidades',
+          fromDb: true
+        } as TeamMember;
+      });
+      setTeam(prev => {
+        const emails = new Set(fromDb.map(m => m.email.toLowerCase()));
+        return [...fromDb, ...prev.filter(m => !m.fromDb && !emails.has((m.email || '').toLowerCase()))];
+      });
+    });
+    return () => { cancelled = true; };
+  }, [clinics]);
+
   const saveTeam = (updated: TeamMember[]) => {
     setTeam(updated);
     try {
-      localStorage.setItem('crm_team_members', JSON.stringify(updated));
+      // Usuários do banco não vão para o cache local (e não guardamos senha em texto puro)
+      localStorage.setItem('crm_team_members', JSON.stringify(updated.filter(m => !m.fromDb).map(({ password, ...m }) => m)));
     } catch (e) {
       console.error(e);
     }
@@ -118,6 +156,15 @@ export default function TeamManagement() {
     };
 
     saveTeam([...team, member]);
+
+    // Dentistas/especialistas viram profissionais da clínica no banco (aparecem na Agenda)
+    const isProfessionalRole = /dentista|cirurgi|ortodont|implant|especialista/i.test(member.role);
+    const targetClinic = clinics.find(c => c.name === member.clinic);
+    if (isSupabaseConfigured() && isProfessionalRole && targetClinic) {
+      insertProfessionalInDb({ clinicId: targetClinic.id, name: member.name, email: member.email, specialty: member.role }).then(ok => {
+        if (!ok) addToast(`"${member.name}" não pôde ser cadastrado como profissional no banco.`, 'error');
+      });
+    }
     setIsInviteModalOpen(false);
     setNewMember({
       name: '',
@@ -130,6 +177,10 @@ export default function TeamManagement() {
   };
 
   const handleRemoveMember = (id: string, name: string) => {
+    if (team.find(m => m.id === id)?.fromDb) {
+      addToast(`"${name}" é um usuário do sistema (Supabase). Para remover, use Authentication → Users no painel do Supabase.`, 'info');
+      return;
+    }
     if (team.length <= 1) {
       addToast('O sistema precisa de ao menos um administrador ativo.', 'error');
       return;
@@ -140,10 +191,10 @@ export default function TeamManagement() {
   };
 
   const filteredTeam = team.filter(member => {
-    const matchesSearch = member.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      member.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      member.role.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      member.clinic.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = (member.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (member.email || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (member.role || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (member.clinic || '').toLowerCase().includes(searchTerm.toLowerCase());
     
     if (!matchesSearch) return false;
     if (currentClinic && member.clinic !== 'Todas as Unidades' && member.clinic !== currentClinic.name) {

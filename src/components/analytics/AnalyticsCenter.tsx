@@ -39,87 +39,57 @@ import {
 } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { useApp } from '@/src/context/AppContext';
+import { useClinicDataset, statusBucket } from '@/src/lib/supabase';
 import { exportToCSV } from '@/src/lib/exportUtils';
 
 export default function AnalyticsCenter() {
-  const { leads, addToast } = useApp();
+  const { leads, addToast, currentClinicId } = useApp();
+  const { patients: patientsList, appointments: appointmentsList } = useClinicDataset(currentClinicId);
   const [activeTab, setActiveTab] = useState<'overview' | 'patients' | 'appointments' | 'crm'>('overview');
 
   const COLORS = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#f43f5e'];
 
   // Read actual patients from storage
-  const patientsList = useMemo(() => {
-    try {
-      const raw = localStorage.getItem('crm_patients_data');
-      if (raw) return JSON.parse(raw);
-    } catch {}
-    return [];
-  }, []);
-
-  // Read actual appointments from storage
-  const appointmentsList = useMemo(() => {
-    try {
-      const raw = localStorage.getItem('crm_appointments_data');
-      if (raw) return JSON.parse(raw);
-    } catch {}
-    return [];
-  }, []);
-
   const totalLeads = leads?.length || 0;
   const totalPatients = patientsList.length;
   const totalAppointments = appointmentsList.length;
 
-  // Monthly patient growth computed from created dates
+  // Novos pacientes por mês, pela data da PRIMEIRA consulta (a data de cadastro no sistema é a da sincronização)
   const patientGrowthData = useMemo(() => {
     const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-    const currentMonthIdx = new Date().getMonth();
-    const result: { name: string; value: number }[] = [];
-
+    const now = new Date();
+    const result: { key: string; name: string; value: number }[] = [];
     for (let i = 5; i >= 0; i--) {
-      const mIdx = (currentMonthIdx - i + 12) % 12;
-      result.push({ name: months[mIdx], value: 0 });
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      result.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, name: months[d.getMonth()], value: 0 });
     }
-
-    patientsList.forEach((p: any) => {
-      const d = p.createdAt ? new Date(p.createdAt) : new Date();
-      const mName = months[d.getMonth()];
-      const match = result.find(r => r.name === mName);
-      if (match) match.value += 1;
+    const firstSeen = new Map<string, string>();
+    appointmentsList.forEach((a: any) => {
+      if (statusBucket(a.status) === 'cancelled') return;
+      const k = String(a.phone || '').replace(/\D/g, '').slice(-8) || a.patient;
+      const day = String(a.date || '').slice(0, 10);
+      if (!k || !day) return;
+      if (!firstSeen.has(k) || day < firstSeen.get(k)!) firstSeen.set(k, day);
     });
-
-    return result;
-  }, [patientsList]);
+    firstSeen.forEach(day => {
+      const m = result.find(r => r.key === day.slice(0, 7));
+      if (m) m.value += 1;
+    });
+    return result.map(({ name, value }) => ({ name, value }));
+  }, [appointmentsList]);
 
   // Appointment status breakdown
   const appointmentStatusData = useMemo(() => {
-    let confirmed = 0;
-    let canceled = 0;
-    let noShow = 0;
-    let completed = 0;
-
-    appointmentsList.forEach((a: any) => {
-      const s = String(a.status || '').toLowerCase();
-      if (s.includes('confirm')) confirmed++;
-      else if (s.includes('cancel')) canceled++;
-      else if (s.includes('falt') || s.includes('noshow')) noShow++;
-      else completed++;
-    });
-
+    const count = { confirmed: 0, cancelled: 0, missed: 0, attended: 0, pending: 0 };
+    appointmentsList.forEach((a: any) => { count[statusBucket(a.status)]++; });
     const total = appointmentsList.length;
-    if (total === 0) {
-      return [
-        { name: 'Confirmados', value: 0 },
-        { name: 'Cancelados', value: 0 },
-        { name: 'Faltas', value: 0 },
-        { name: 'Realizados', value: 0 },
-      ];
-    }
-
+    const pct = (n: number) => (total === 0 ? 0 : Math.round((n / total) * 100));
     return [
-      { name: 'Confirmados', value: Math.round((confirmed / total) * 100) },
-      { name: 'Cancelados', value: Math.round((canceled / total) * 100) },
-      { name: 'Faltas', value: Math.round((noShow / total) * 100) },
-      { name: 'Realizados', value: Math.round((completed / total) * 100) },
+      { name: 'Atendidos', value: pct(count.attended) },
+      { name: 'Confirmados', value: pct(count.confirmed) },
+      { name: 'Pendentes', value: pct(count.pending) },
+      { name: 'Faltas', value: pct(count.missed) },
+      { name: 'Cancelados', value: pct(count.cancelled) },
     ];
   }, [appointmentsList]);
 
@@ -165,7 +135,7 @@ export default function AnalyticsCenter() {
     const total = leads?.length || 0;
     const contacted = leads?.filter(l => l.status !== 'novo' && (l.status as any) !== 'new').length || 0;
     const scheduled = appointmentsList.length;
-    const attended = appointmentsList.filter((a: any) => String(a.status).toLowerCase().includes('realiz')).length;
+    const attended = appointmentsList.filter((a: any) => statusBucket(a.status) === 'attended').length;
     const closed = leads?.filter(l => l.status === 'vendido' || (l.status as any) === 'sold').length || 0;
 
     return [
@@ -252,8 +222,8 @@ export default function AnalyticsCenter() {
             <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
               <div className="flex items-center justify-between mb-8">
                 <div>
-                  <h3 className="text-lg font-bold text-slate-900 dark:text-white leading-tight">Crescimento de Pacientes</h3>
-                  <p className="text-xs text-slate-500 mt-1">Evolução de novos cadastros de pacientes.</p>
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-white leading-tight">Novos pacientes por mês</h3>
+                  <p className="text-xs text-slate-500 mt-1">Pacientes que fizeram a primeira consulta em cada mês (a partir do histórico do Clinicorp).</p>
                 </div>
               </div>
               <div className="h-[300px]">
