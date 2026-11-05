@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { Clinic, User, Role, Lead } from '../types';
 import { INITIAL_CLINICS, INITIAL_LEADS, seedLocalStorageIfEmpty } from '../lib/mockData';
 import {
@@ -231,11 +231,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const [user, setUser] = useState<User | null>(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('user');
-      return saved ? JSON.parse(saved) : null;
+      try {
+        const saved = localStorage.getItem('user');
+        return saved ? JSON.parse(saved) : null;
+      } catch {
+        return null;
+      }
     }
     return null;
   });
+
+  // Usuário REAL da sessão (vindo do login/Supabase). A troca de perfil só vale para quem é super_admin de verdade.
+  const realUserRef = useRef<User | null>(null);
 
   const isClientOnlyMode = Boolean(
     user && (user.role === Role.CLINIC_ADMIN || user.role === Role.CLINIC_VIEWER)
@@ -310,15 +317,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [user, currentClinicId]);
 
   const switchUserRole = useCallback((role: Role, clinicId?: string) => {
+    const real = realUserRef.current;
+    if (!real || real.role !== Role.SUPER_ADMIN) {
+      addToast('Só o administrador geral pode alternar o modo de visualização.', 'error');
+      return;
+    }
     if (role === Role.SUPER_ADMIN) {
-      const superUser: User = {
-        id: 'u-admin',
-        name: 'Gustavo Admin (Rede Geral)',
-        email: 'portilhogustavohenriquegodoi@gmail.com',
-        role: Role.SUPER_ADMIN,
-        accessibleClinicIds: clinics.map(c => c.id),
-        avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=GustavoAdmin'
-      };
+      const superUser: User = { ...real, accessibleClinicIds: clinics.map(c => c.id) };
       setUser(superUser);
       localStorage.setItem('user', JSON.stringify(superUser));
       setCurrentClinicIdState('all');
@@ -363,19 +368,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       profile = (await sb.from('profiles').select('*').eq('id', authUser.id).maybeSingle()).data;
       allClinicIds = ((await sb.from('clinics').select('id')).data || []).map((c: any) => c.id);
     }
-    const dbRole: string = profile?.role || 'admin';
+    // Sem perfil = menor privilégio. Só 'super_admin' vê a rede toda (é o mesmo critério da RLS no banco).
+    const dbRole: string = profile?.role || 'none';
     const role =
-      dbRole === 'super_admin' || dbRole === 'admin' ? Role.SUPER_ADMIN :
+      dbRole === 'super_admin' ? Role.SUPER_ADMIN :
+      dbRole === 'admin' ? Role.CLINIC_ADMIN :
       dbRole === 'receptionist' || dbRole === 'marketing' ? Role.CRC_OPERATOR :
       Role.CLINIC_VIEWER;
-    const restricted: string[] = profile?.accessible_clinic_ids || [];
+    const restricted: string[] = Array.from(new Set(
+      [...(profile?.accessible_clinic_ids || []), profile?.clinic_id, profile?.default_clinic_id].filter(Boolean)
+    )) as string[];
     const email = authUser.email || profile?.email || '';
     return {
       id: authUser.id,
       name: profile?.full_name || email.split('@')[0],
       email,
       role,
-      accessibleClinicIds: restricted.length > 0 ? restricted : allClinicIds,
+      accessibleClinicIds: role === Role.SUPER_ADMIN ? allClinicIds : restricted,
       avatar: profile?.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`
     };
   }, []);
@@ -388,60 +397,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         throw new Error(error?.message === 'Invalid login credentials' ? 'E-mail ou senha incorretos' : (error?.message || 'Credenciais inválidas'));
       }
       const appUser = await buildUserFromSession(data.user);
+      realUserRef.current = appUser;
       setUser(appUser);
       localStorage.setItem('user', JSON.stringify(appUser));
       addToast('Login realizado com sucesso!', 'success');
       return;
     }
 
-    // Modo demonstração (sem Supabase configurado)
-    return new Promise<void>((resolve, reject) => {
-      setTimeout(() => {
-        if (email && password) {
-          // Check if it matches a specific client
-          const matchedClinic = clinics.find(c => c.email.toLowerCase() === email.toLowerCase());
-          
-          if (matchedClinic) {
-            const clientUser: User = {
-              id: `u-client-${matchedClinic.id}`,
-              name: `${matchedClinic.responsible} (${matchedClinic.name})`,
-              email: email,
-              role: Role.CLINIC_ADMIN,
-              accessibleClinicIds: [matchedClinic.id],
-              avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${email}`
-            };
-            setUser(clientUser);
-            localStorage.setItem('user', JSON.stringify(clientUser));
-            setCurrentClinicIdState(matchedClinic.id);
-            addToast(`Bem-vindo ao Portal ${matchedClinic.name}!`, 'success');
-            resolve();
-            return;
-          }
-
-          // Default admin user
-          const mockUser: User = {
-            id: 'u1',
-            name: 'Gustavo Admin',
-            email: email,
-            role: Role.SUPER_ADMIN,
-            accessibleClinicIds: clinics.map(c => c.id),
-            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${email}`
-          };
-          setUser(mockUser);
-          localStorage.setItem('user', JSON.stringify(mockUser));
-          addToast('Login realizado com sucesso!', 'success');
-          resolve();
-        } else {
-          reject(new Error('Credenciais inválidas'));
-        }
-      }, 600);
-    });
+    // Sem Supabase não há como validar credenciais: nunca liberamos acesso "de demonstração".
+    throw new Error('Servidor de dados não configurado. Fale com o administrador.');
   };
 
   const logout = useCallback(() => {
     getSupabase()?.auth.signOut().catch(() => {});
     setUser(null);
-    localStorage.removeItem('user');
+    realUserRef.current = null;
+    // Dados de clínica guardados no navegador não podem sobrar para o próximo login
+    ['user', 'currentClinicId', 'crm_leads_data', 'crm_patients_data', 'crm_appointments_data', 'crm_transactions_data',
+      'crm_followups_data', 'crm_clinics_list', 'crm_team_members', 'crm_team_data', 'crm_schedule_prefill'
+    ].forEach(k => { try { localStorage.removeItem(k); } catch { /* */ } });
     setActiveTabState('dashboard');
     setSubPageState(null);
     setSubPageData(null);
@@ -452,11 +426,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const sb = getSupabase();
     if (!sb) return;
-    sb.auth.getSession().then(({ data }) => {
+    sb.auth.getSession().then(async ({ data }) => {
       if (!data.session) {
         setUser(null);
         localStorage.removeItem('user');
+        return;
       }
+      const real = await buildUserFromSession(data.session.user);
+      realUserRef.current = real;
+      // O usuário guardado no navegador só vale se for o da sessão (ou a visão de cliente de um super_admin)
+      setUser(prev => (prev && (prev.id === real.id || (real.role === Role.SUPER_ADMIN && prev.id.startsWith('u-')))) ? prev : real);
     });
     const { data: sub } = sb.auth.onAuthStateChange(event => {
       if (event === 'SIGNED_OUT') {
@@ -465,7 +444,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     });
     return () => sub.subscription.unsubscribe();
-  }, []);
+  }, [buildUserFromSession]);
 
   // Fonte da verdade = Supabase: carrega clínicas e leads depois do login
   const syncFromSupabase = useCallback(async () => {

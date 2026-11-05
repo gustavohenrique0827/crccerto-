@@ -62,6 +62,7 @@ export function useModuleAccess(moduleId: string): ModuleAccessResult {
     'agenda': 'appointments',
     'appointments': 'appointments',
     'followups': 'followups',
+    'mensageria': 'crm',
     'tarefas': 'tasks',
     'relatorios': 'reports',
     'reports': 'reports',

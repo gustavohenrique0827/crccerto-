@@ -12,7 +12,8 @@ import {
   Users, 
   Link2, 
   Settings, 
-  Boxes
+  Boxes,
+  MessagesSquare
 } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { useApp } from '@/src/context/AppContext';
@@ -57,6 +58,7 @@ export function MainSidebar({
       'pacientes': 'patients',
       'agenda': 'appointments',
       'followups': 'followups',
+      'mensageria': 'crm',
       'tarefas': 'tasks',
       'relatorios': 'reports',
       'integracoes': 'integrations',
@@ -79,6 +81,7 @@ export function MainSidebar({
       items: [
         { id: 'leads', label: 'Pipeline', icon: Target },
         { id: 'pacientes', label: 'Pacientes', icon: UserCircle },
+        { id: 'mensageria', label: 'Mensageria', icon: MessagesSquare },
         { id: 'followups', label: 'Follow-ups', icon: Activity }
       ]
     },

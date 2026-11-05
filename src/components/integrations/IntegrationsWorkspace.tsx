@@ -1,42 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Building2, 
-  Link2, 
-  CheckCircle2, 
-  AlertCircle, 
-  RefreshCw, 
-  MoreVertical,
-  MessageSquare,
-  Globe,
-  Database,
-  Calendar,
-  Lock,
-  ExternalLink,
-  ChevronRight,
-  Settings,
-  Webhook,
-  Copy,
-  Plus,
-  Terminal,
-  Check,
-  Sliders,
-  History,
-  ArrowRight,
-  Clock,
-  Cloud,
-  Loader2,
-  ShieldCheck,
-  PhoneCall,
-  Sparkles,
-  Layers,
-  Filter
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  AlertTriangle, ArrowLeft, ArrowRight, Building2, Calendar, CheckCircle2, Database, MessageCircle, PlugZap, RefreshCw, Stethoscope
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useApp } from '../../context/AppContext';
-import { Role } from '../../types';
 import { getGoogleUser, isAccessTokenValid } from '../../lib/googleAuth';
-import { getGoogleSyncSettings, formatIntervalLabel, GoogleSyncSettings } from '../../lib/googleSyncSettings';
-import { saveClinicSyncIntervalToFirestore, fetchClinicSyncSettingsFromFirestore } from '../../lib/firestoreClinicSettings';
+import { fetchWhatsappSessions, getSupabase, isSupabaseConfigured } from '../../lib/supabase';
 import GoogleIntegrationSettingsPanel from './GoogleIntegrationSettingsPanel';
 import GoogleCalendarMappingPanel from './GoogleCalendarMappingPanel';
 import SyncHistoryTab from './SyncHistoryTab';
@@ -44,790 +13,248 @@ import SimplesDentalConfigPanel from './SimplesDentalConfigPanel';
 import ClinicorpConfigPanel from './ClinicorpConfigPanel';
 import SupabaseConfigPanel from './SupabaseConfigPanel';
 
-import { crmApiClient, WebhookLog } from '../../lib/apiClient';
-import { getSupabase, isSupabaseConfigured } from '../../lib/supabase';
-import { runClinicorpSync } from '../../lib/clinicorpSync';
+type View = 'hub' | 'clinicorp' | 'google' | 'supabase' | 'simples_dental';
+type GoogleTab = 'settings' | 'mapping' | 'history';
+type Tone = 'ok' | 'warn' | 'off';
 
-export type IntegrationSegment = 'ceop' | 'odontologia' | 'all';
-
-interface Integration {
+interface Card {
   id: string;
   name: string;
-  segment: 'ceop' | 'odontologia' | 'both';
-  category: 'healthcare' | 'communication' | 'calendar' | 'marketing' | 'webhooks' | 'telephony';
+  group: string;
   description: string;
-  status: 'connected' | 'disconnected' | 'syncing' | 'error';
-  lastSync?: string;
-  logo: React.ReactNode;
+  tone: Tone;
+  badge: string;
+  facts: string[];
+  icon: React.ReactNode;
+  accent: string; // cor do ícone
+  action: { label: string; onClick: () => void };
 }
 
-interface WebhookItem {
-  id: string;
-  name: string;
-  segment: 'ceop' | 'odontologia' | 'both';
-  url: string;
-  source: string;
-  status: 'active' | 'inactive';
-  lastTriggered?: string;
-  secretToken: string;
-}
+const TONE_STYLE: Record<Tone, string> = {
+  ok: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300',
+  warn: 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300',
+  off: 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+};
+
+const fmtDateTime = (iso?: string | null) =>
+  iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : null;
+
+interface ClinicStatus { lastSync: string | null; appointments: number; whatsapp: { session: string; active: boolean } | null }
 
 export default function IntegrationsWorkspace() {
-  const { currentClinic, addToast, user } = useApp();
-  
-  // Detect default segment based on role / current clinic
-  const isCeopRole = user?.role === Role.CEOP_OPERATOR || user?.role === Role.CEOP || user?.role === Role.CRC_OPERATOR;
-  
-  const [selectedSegment, setSelectedSegment] = useState<IntegrationSegment>(() => {
-    if (isCeopRole) return 'ceop';
-    return 'odontologia';
-  });
+  const { currentClinic, clinics, isAllClinicsView, setActiveTab } = useApp();
+  const [view, setView] = useState<View>('hub');
+  const [googleTab, setGoogleTab] = useState<GoogleTab>('settings');
+  const [loading, setLoading] = useState(true);
+  const [byClinic, setByClinic] = useState<Record<string, ClinicStatus>>({});
+  const [msgs24h, setMsgs24h] = useState<number | null>(null);
+  const [lastMsgAt, setLastMsgAt] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'integrations' | 'settings' | 'history' | 'mapping' | 'webhooks' | 'simples_dental' | 'clinicorp' | 'supabase'>('integrations');
-  const [syncingId, setSyncingId] = useState<string | null>(null);
-
-  // Estado REAL do Clinicorp: o que já foi sincronizado e quando
-  const [clinicorpInfo, setClinicorpInfo] = useState<{ lastSync: string | null; appointments: number; patients: number } | null>(null);
-  const loadClinicorpInfo = React.useCallback(async () => {
+  const load = useCallback(async () => {
+    setLoading(true);
     const sb = getSupabase();
-    if (!sb) return setClinicorpInfo(null);
-    const [last, apts, pats] = await Promise.all([
-      sb.from('appointments').select('updated_at').not('clinicorp_id', 'is', null).order('updated_at', { ascending: false }).limit(1),
-      sb.from('appointments').select('id', { count: 'exact', head: true }).not('clinicorp_id', 'is', null).neq('kind', 'blocked'),
-      sb.from('patients').select('id', { count: 'exact', head: true }).not('clinicorp_id', 'is', null)
+    if (!sb) { setLoading(false); return; }
+    const sessions = await fetchWhatsappSessions();
+    const result: Record<string, ClinicStatus> = {};
+    await Promise.all(clinics.map(async c => {
+      const [last, count] = await Promise.all([
+        sb.from('appointments').select('updated_at').eq('clinic_id', c.id).not('clinicorp_id', 'is', null).order('updated_at', { ascending: false }).limit(1),
+        sb.from('appointments').select('id', { count: 'exact', head: true }).eq('clinic_id', c.id).not('clinicorp_id', 'is', null).neq('kind', 'blocked')
+      ]);
+      const s = sessions.find(x => x.clinicId === c.id);
+      result[c.id] = {
+        lastSync: last.data?.[0]?.updated_at || null,
+        appointments: count.count || 0,
+        whatsapp: s ? { session: s.session, active: s.active } : null
+      };
+    }));
+    setByClinic(result);
+
+    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const [recent, latest] = await Promise.all([
+      sb.from('lead_interactions').select('id', { count: 'exact', head: true }).in('interaction_type', ['mensagem_cliente', 'mensagem_responsavel']).gte('created_at', since),
+      sb.from('lead_interactions').select('created_at').in('interaction_type', ['mensagem_cliente', 'mensagem_responsavel']).order('created_at', { ascending: false }).limit(1)
     ]);
-    // `kind` pode não existir ainda (migration pendente): refaz a contagem simples
-    const aptCount = apts.error
-      ? (await sb.from('appointments').select('id', { count: 'exact', head: true }).not('clinicorp_id', 'is', null)).count || 0
-      : apts.count || 0;
-    setClinicorpInfo({ lastSync: last.data?.[0]?.updated_at || null, appointments: aptCount, patients: pats.count || 0 });
-  }, []);
-  useEffect(() => { loadClinicorpInfo(); }, [loadClinicorpInfo]);
+    setMsgs24h(recent.count ?? 0);
+    setLastMsgAt(latest.data?.[0]?.created_at || null);
+    setLoading(false);
+  }, [clinics]);
+  useEffect(() => { load(); }, [load]);
 
-  const integrationState = (id: string): { label: string; detail?: string; tone: 'ok' | 'warn' | 'off' } => {
-    if (id === 'clinicorp') {
-      if (!isSupabaseConfigured() || !clinicorpInfo?.lastSync) return { label: 'Nunca sincronizado', detail: 'Use Testar conexão e depois sincronize em Clinicorp (CEOP)', tone: 'warn' };
-      const when = new Date(clinicorpInfo.lastSync).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-      return { label: 'Conectado', detail: `Última sincronização ${when} · ${clinicorpInfo.appointments} agendamentos · ${clinicorpInfo.patients} pacientes`, tone: 'ok' };
-    }
-    if (id.includes('google')) {
-      const ok = Boolean(getGoogleUser() && isAccessTokenValid());
-      return ok ? { label: 'Conectado', tone: 'ok' } : { label: 'Não conectado', detail: 'Conecte pela Agenda', tone: 'off' };
-    }
-    return { label: 'Não conectada', detail: 'Ainda não configurada neste sistema', tone: 'off' };
-  };
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [googleUser, setGoogleUser] = useState(getGoogleUser());
-  const [isTokenValid, setIsTokenValid] = useState(() => isAccessTokenValid());
-  const [syncSettings, setSyncSettings] = useState<GoogleSyncSettings>(() => 
-    getGoogleSyncSettings(currentClinic?.id)
+  const focus = currentClinic && !isAllClinicsView ? byClinic[currentClinic.id] : undefined;
+  const googleOk = Boolean(getGoogleUser() && isAccessTokenValid());
+  const supabaseOk = isSupabaseConfigured();
+
+  const cards = useMemo<Card[]>(() => {
+    // Em "todas as clínicas" somamos o que existe; com uma clínica escolhida, mostramos só a dela
+    const scope = focus ? [focus] : Object.values(byClinic);
+    const lastSync = scope.map(s => s.lastSync).filter(Boolean).sort().pop() || null;
+    const apts = scope.reduce((n, s) => n + s.appointments, 0);
+    const wa = scope.map(s => s.whatsapp).filter(Boolean) as { session: string; active: boolean }[];
+    const waActive = wa.some(w => w.active);
+    const syncAgeH = lastSync ? (Date.now() - new Date(lastSync).getTime()) / 3600000 : null;
+
+    return [
+      {
+        id: 'clinicorp', name: 'Clinicorp', group: 'Sistema da clínica',
+        description: 'Agenda, pacientes, profissionais, status e etiquetas: a fonte oficial dos atendimentos.',
+        tone: !lastSync ? 'off' : syncAgeH! > 48 ? 'warn' : 'ok',
+        badge: !lastSync ? 'Nunca sincronizado' : syncAgeH! > 48 ? 'Sincronização antiga' : 'Conectado',
+        facts: lastSync ? [`Última sincronização: ${fmtDateTime(lastSync)}`, `${apts} agendamentos importados`] : ['Faça a primeira sincronização para trazer a agenda'],
+        icon: <Stethoscope size={22} />, accent: 'bg-sky-500',
+        action: { label: 'Configurar e sincronizar', onClick: () => setView('clinicorp') }
+      },
+      {
+        id: 'whatsapp', name: 'WhatsApp (agente n8n + WAHA)', group: 'Mensageria',
+        description: 'O agente atende os contatos no WhatsApp e grava cada conversa e lead no sistema.',
+        tone: wa.length === 0 ? 'off' : waActive ? 'ok' : 'warn',
+        badge: wa.length === 0 ? 'Sem sessão cadastrada' : waActive ? 'Ativo' : 'Sessão pausada',
+        facts: [
+          wa.length ? `Sessão: ${wa.map(w => w.session).join(', ')}` : 'Cadastre a sessão do WAHA em waha_tenants',
+          msgs24h === null ? 'Contando mensagens…' : `${msgs24h} mensagens nas últimas 24 h`,
+          ...(lastMsgAt ? [`Última mensagem: ${fmtDateTime(lastMsgAt)}`] : [])
+        ],
+        icon: <MessageCircle size={22} />, accent: 'bg-emerald-500',
+        action: { label: 'Abrir Mensageria', onClick: () => setActiveTab('mensageria') }
+      },
+      {
+        id: 'google', name: 'Google Agenda', group: 'Agenda',
+        description: 'Envia os agendamentos para o Google Agenda da equipe e traz eventos de volta.',
+        tone: googleOk ? 'ok' : 'off',
+        badge: googleOk ? 'Conectado' : 'Não conectado',
+        facts: [googleOk ? `Conta: ${getGoogleUser()?.email || 'Google'}` : 'Conecte uma conta Google para sincronizar'],
+        icon: <Calendar size={22} />, accent: 'bg-blue-500',
+        action: { label: googleOk ? 'Gerenciar' : 'Conectar', onClick: () => { setGoogleTab('settings'); setView('google'); } }
+      },
+      {
+        id: 'supabase', name: 'Banco de dados (Supabase)', group: 'Dados',
+        description: 'Onde ficam leads, pacientes, agenda e conversas. Todos os módulos leem daqui.',
+        tone: supabaseOk ? 'ok' : 'warn',
+        badge: supabaseOk ? 'Conectado' : 'Modo local',
+        facts: [supabaseOk ? 'Dados em tempo real, com login por e-mail e senha' : 'Sem Supabase: os dados ficam só neste navegador'],
+        icon: <Database size={22} />, accent: 'bg-violet-500',
+        action: { label: 'Ver conexão', onClick: () => setView('supabase') }
+      },
+      {
+        id: 'simples_dental', name: 'Simples Dental', group: 'Sistema da clínica',
+        description: 'Alternativa ao Clinicorp para clínicas que usam o Simples Dental.',
+        tone: 'off', badge: 'Não conectado',
+        facts: ['Nenhuma clínica usa esta integração hoje'],
+        icon: <PlugZap size={22} />, accent: 'bg-slate-500',
+        action: { label: 'Configurar', onClick: () => setView('simples_dental') }
+      }
+    ];
+  }, [byClinic, focus, msgs24h, lastMsgAt, googleOk, supabaseOk, setActiveTab]);
+
+  const connected = cards.filter(c => c.tone === 'ok').length;
+  const attention = cards.filter(c => c.tone === 'warn').length;
+  const groups = Array.from(new Set(cards.map(c => c.group)));
+
+  const Back = ({ title }: { title: string }) => (
+    <div className="flex items-center gap-3 mb-5">
+      <button onClick={() => setView('hub')} className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer">
+        <ArrowLeft size={14} /> Integrações
+      </button>
+      <h2 className="text-lg font-extrabold text-[var(--color-text-primary)]">{title}</h2>
+    </div>
   );
-  const [isSavingFirestore, setIsSavingFirestore] = useState(false);
-  const [firestoreLastSaved, setFirestoreLastSaved] = useState<string | null>(() => {
-    if (typeof window !== 'undefined') {
-      const raw = localStorage.getItem(`crm_gcal_firestore_sync_${currentClinic?.id || '1'}`);
-      if (raw) {
-        try {
-          const p = JSON.parse(raw);
-          return p.savedAt ? new Date(p.savedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : null;
-        } catch (e) {}
-      }
-    }
-    return null;
-  });
 
-  useEffect(() => {
-    setGoogleUser(getGoogleUser());
-    setIsTokenValid(isAccessTokenValid());
-    setSyncSettings(getGoogleSyncSettings(currentClinic?.id));
-
-    const loadClinicFirestoreSettings = async () => {
-      if (currentClinic?.id) {
-        const firestoreSettings = await fetchClinicSyncSettingsFromFirestore(currentClinic.id);
-        if (firestoreSettings) {
-          setSyncSettings(firestoreSettings);
-        }
-      }
-    };
-    loadClinicFirestoreSettings();
-
-    const onTokenExpired = () => setIsTokenValid(false);
-    const onTokenUpdated = () => {
-      setGoogleUser(getGoogleUser());
-      setIsTokenValid(isAccessTokenValid());
-    };
-    const onLoggedOut = () => {
-      setGoogleUser(null);
-      setIsTokenValid(false);
-    };
-    const onSettingsChanged = (e: any) => {
-      if (e.detail) setSyncSettings(e.detail);
-      else setSyncSettings(getGoogleSyncSettings(currentClinic?.id));
-    };
-    const onFirestoreStatus = (e: any) => {
-      if (e.detail?.savedAt) {
-        setFirestoreLastSaved(new Date(e.detail.savedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
-      }
-    };
-
-    window.addEventListener('crm_google_token_expired', onTokenExpired);
-    window.addEventListener('crm_google_token_updated', onTokenUpdated);
-    window.addEventListener('crm_google_logged_out', onLoggedOut);
-    window.addEventListener('crm_google_sync_settings_changed', onSettingsChanged);
-    window.addEventListener('crm_firestore_sync_status_changed', onFirestoreStatus);
-
-    return () => {
-      window.removeEventListener('crm_google_token_expired', onTokenExpired);
-      window.removeEventListener('crm_google_token_updated', onTokenUpdated);
-      window.removeEventListener('crm_google_logged_out', onLoggedOut);
-      window.removeEventListener('crm_google_sync_settings_changed', onSettingsChanged);
-      window.removeEventListener('crm_firestore_sync_status_changed', onFirestoreStatus);
-    };
-  }, [currentClinic?.id]);
-
-  const handleSyncIntervalChange = async (newInterval: number) => {
-    setIsSavingFirestore(true);
-    const clinicId = currentClinic?.id || '1';
-    const clinicName = currentClinic?.name || 'Clínica Principal';
-    const autoSync = newInterval > 0;
-    const intervalMinutes = autoSync ? newInterval : syncSettings.syncIntervalMinutes;
-
-    try {
-      const result = await saveClinicSyncIntervalToFirestore(
-        clinicId,
-        clinicName,
-        intervalMinutes,
-        autoSync,
-        user?.email || user?.name || 'Administrador'
-      );
-
-      if (result.success) {
-        const timeStr = new Date(result.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-        setFirestoreLastSaved(timeStr);
-        setSyncSettings(prev => ({
-          ...prev,
-          syncIntervalMinutes: intervalMinutes,
-          autoSyncEnabled: autoSync
-        }));
-        addToast(
-          autoSync 
-            ? `Frequência de sincronização configurada para ${formatIntervalLabel(intervalMinutes)}!` 
-            : 'Sincronização manual ativada!',
-          'success'
-        );
-      } else {
-        addToast('Salvo em cache local.', 'info');
-      }
-    } catch (err: any) {
-      console.error('Erro ao atualizar no Firestore:', err);
-      addToast('Erro ao salvar no Firestore.', 'error');
-    } finally {
-      setIsSavingFirestore(false);
-    }
-  };
-
-  // Webhooks state
-  const [webhookLogs, setWebhookLogs] = useState<WebhookLog[]>([]);
-  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
-  const [apiInfo, setApiInfo] = useState<any>(null);
-
-  const [webhooks, setWebhooks] = useState<WebhookItem[]>([
-    {
-      id: 'wh_ceop_1',
-      name: 'Webhook Lead Master HMAC (CEOP)',
-      segment: 'ceop',
-      url: `${typeof window !== 'undefined' ? window.location.origin : ''}/api/webhooks/ceop/master`,
-      source: 'CEOP Central',
-      status: 'active',
-      lastTriggered: 'Ativo (Pronto para receber)',
-      secretToken: 'whsec_ceop_master_98765'
-    },
-    {
-      id: 'wh_ceop_2',
-      name: 'Meta Ads CEOP (Facebook & Insta Central)',
-      segment: 'ceop',
-      url: `${typeof window !== 'undefined' ? window.location.origin : ''}/api/webhooks/ceop/meta`,
-      source: 'Meta Ads CEOP',
-      status: 'active',
-      lastTriggered: 'Ativo (Conectado)',
-      secretToken: 'whsec_ceop_meta_ads'
-    },
-    {
-      id: 'wh_ceop_3',
-      name: 'Google Lead Forms CEOP',
-      segment: 'ceop',
-      url: `${typeof window !== 'undefined' ? window.location.origin : ''}/api/webhooks/ceop/google`,
-      source: 'Google Ads CEOP',
-      status: 'active',
-      lastTriggered: 'Ativo (Conectado)',
-      secretToken: 'whsec_ceop_gads'
-    },
-    {
-      id: 'wh_odonto_1',
-      name: 'Webhook Confirmação Dental (Clinicorp)',
-      segment: 'odontologia',
-      url: `${typeof window !== 'undefined' ? window.location.origin : ''}/api/webhooks/odonto/clinicorp`,
-      source: 'Clinicorp Dental',
-      status: 'active',
-      lastTriggered: 'Ativo (Pronto para receber)',
-      secretToken: 'whsec_clinicorp_sync'
-    },
-    {
-      id: 'wh_odonto_2',
-      name: 'Simples Dental Webhook (Prontuário & Agenda)',
-      segment: 'odontologia',
-      url: `${typeof window !== 'undefined' ? window.location.origin : ''}/api/webhooks/odonto/simplesdental`,
-      source: 'Simples Dental',
-      status: 'active',
-      lastTriggered: 'Ativo (Pronto para receber)',
-      secretToken: 'whsec_simples_dental'
-    }
-  ]);
-
-  const loadWebhookLogs = async () => {
-    setIsLoadingLogs(true);
-    try {
-      const logs = await crmApiClient.getWebhookLogs();
-      setWebhookLogs(logs);
-      const info = await crmApiClient.getApiInfo();
-      setApiInfo(info);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsLoadingLogs(false);
-    }
-  };
-
-  useEffect(() => {
-    if (activeTab === 'webhooks') {
-      loadWebhookLogs();
-    }
-  }, [activeTab]);
-
-  const handleTestWebhook = async (wh: WebhookItem) => {
-    addToast(`Disparando webhook de teste para ${wh.name}...`, 'info');
-    const result = await crmApiClient.sendTestWebhook(wh.source, {
-      nome: 'Lead Teste Conectividade',
-      telefone: '(11) 99888-7766',
-      email: 'lead.teste@sistema.com.br',
-      procedimento: wh.segment === 'ceop' ? 'Atendimento CEOP' : 'Avaliação Odontológica',
-      origem: `Webhook Teste (${wh.name})`,
-      observacao: 'Lead gerado pelo testador de Webhook'
-    });
-
-    if (result.success) {
-      addToast(`Webhook processado com sucesso! Lead "${result.lead?.name}" cadastrado!`, 'success');
-      loadWebhookLogs();
-    } else {
-      addToast(`Erro ao testar webhook: ${result.message || 'Falha no servidor'}`, 'error');
-    }
-  };
-
-  const handleClearLogs = async () => {
-    await crmApiClient.clearWebhookLogs();
-    setWebhookLogs([]);
-    addToast('Logs de webhooks limpos.', 'success');
-  };
-
-  const [isNewWebhookModal, setIsNewWebhookModal] = useState(false);
-  const [newWebhookName, setNewWebhookName] = useState('');
-  const [newWebhookSource, setNewWebhookSource] = useState('Central CEOP');
-
-  const handleCopyUrl = (url: string, id: string) => {
-    navigator.clipboard.writeText(url);
-    setCopiedId(id);
-    addToast('URL do Webhook copiada!', 'success');
-    setTimeout(() => setCopiedId(null), 2000);
-  };
-
-  const handleCreateWebhook = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newWebhookName.trim()) return;
-    const token = 'sec_' + Math.random().toString(36).substring(2, 10);
-    const newWh: WebhookItem = {
-      id: 'wh_' + Date.now(),
-      name: newWebhookName,
-      segment: selectedSegment === 'ceop' ? 'ceop' : 'odontologia',
-      url: `https://api.crm.com/v1/webhook?token=${token}`,
-      source: newWebhookSource,
-      status: 'active',
-      lastTriggered: 'Nunca',
-      secretToken: token
-    };
-    const updated = [newWh, ...webhooks];
-    setWebhooks(updated);
-    setNewWebhookName('');
-    setIsNewWebhookModal(false);
-    addToast('Webhook criado com sucesso!', 'success');
-  };
-
-  const isGoogleConnected = Boolean(googleUser && isTokenValid);
-
-  // All Master Integrations with Context Segment Tagging
-  const allIntegrations: Integration[] = [
-    // CEOP Context Integrations
-    {
-      id: 'ceop_whatsapp_bot',
-      name: 'WhatsApp Bot & Disparos (CEOP Central)',
-      segment: 'ceop',
-      category: 'communication',
-      description: 'Centralização de mensagens, distribuição de leads para operadores e atendimento automatizado CEOP.',
-      status: 'connected',
-      lastSync: 'Em tempo real (CEOP)',
-      logo: <MessageSquare className="text-emerald-500" size={24} />
-    },
-    {
-      id: 'ceop_webhook_hmac',
-      name: 'Master Webhook HMAC (CEOP CRM)',
-      segment: 'ceop',
-      category: 'webhooks',
-      description: 'Endpoint HMAC criptografado para recepção unificada de leads e eventos comerciais da Central CEOP.',
-      status: 'connected',
-      lastSync: 'Pronto para receber',
-      logo: <Webhook className="text-purple-500" size={24} />
-    },
-    {
-      id: 'ceop_voip_pabx',
-      name: 'Central Telefônica VoIP & Gravador (CEOP)',
-      segment: 'ceop',
-      category: 'telephony',
-      description: 'Integração PABX IP com registro de chamadas receptivas/ativas e métricas de tempo de atendimento.',
-      status: 'connected',
-      lastSync: 'Conectado (Central CEOP)',
-      logo: <PhoneCall className="text-amber-500" size={24} />
-    },
-    {
-      id: 'ceop_meta_ads',
-      name: 'Meta Ads Central (Facebook & Insta CEOP)',
-      segment: 'ceop',
-      category: 'marketing',
-      description: 'Captação direta de anúncios da Central CEOP e distribuição inteligente para a equipe de atendimento.',
-      status: 'connected',
-      lastSync: 'Há 4 minutos',
-      logo: <Globe className="text-blue-500" size={24} />
-    },
-    {
-      id: 'ceop_sms_email',
-      name: 'Disparador SMS & E-mail Marketing CEOP',
-      segment: 'ceop',
-      category: 'communication',
-      description: 'Régua de mensagens para nutrição de leads, pesquisas de satisfação e avisos operacionais.',
-      status: 'connected',
-      lastSync: 'Há 15 minutos',
-      logo: <Cloud className="text-sky-500" size={24} />
-    },
-
-    // Odontologia / Clinic Context Integrations
-    {
-      id: 'clinicorp',
-      name: 'Clinicorp Dental',
-      segment: 'odontologia',
-      category: 'healthcare',
-      description: 'Gestão odontológica completa com sincronização de prontuários eletrônicos, orçamentos e agenda de dentistas.',
-      status: 'connected',
-      lastSync: 'Há 3 minutos (Unidade Dental)',
-      logo: <Database className="text-blue-600" size={24} />
-    },
-    {
-      id: 'simples_dental',
-      name: 'Simples Dental',
-      segment: 'odontologia',
-      category: 'healthcare',
-      description: 'Sincronização de fichas clínicas, anamneses, agendamentos e orçamentos do Simples Dental.',
-      status: 'connected',
-      lastSync: 'Agente Dental Conectado (Há 5s)',
-      logo: <Database className="text-emerald-600" size={24} />
-    },
-    {
-      id: 'google_calendar',
-      name: 'Google Calendar (Agenda Odontológica)',
-      segment: 'odontologia',
-      category: 'calendar',
-      description: 'Sincronização bidirecional em tempo real com consultórios, cadeiras e calendários de odontólogos.',
-      status: isGoogleConnected ? 'connected' : 'disconnected',
-      lastSync: syncSettings.lastSyncAt 
-        ? `Hoje às ${new Date(syncSettings.lastSyncAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` 
-        : 'Aguardando sincronização',
-      logo: <Calendar className="text-blue-500" size={24} />
-    },
-    {
-      id: 'whatsapp_clinic_local',
-      name: 'WhatsApp da Clínica Dental (Local)',
-      segment: 'odontologia',
-      category: 'communication',
-      description: 'Notificações diretas da clínica para confirmação presencial de consultas e lembretes de retorno.',
-      status: 'connected',
-      lastSync: 'Em tempo real',
-      logo: <MessageSquare className="text-emerald-500" size={24} />
-    },
-    {
-      id: 'pacs_radiology',
-      name: 'Radiologia & PACS Odontológico',
-      segment: 'odontologia',
-      category: 'healthcare',
-      description: 'Anexo e visualização de panorâmicas, tomografias e laudos odontológicos direto no cadastro do paciente.',
-      status: 'connected',
-      lastSync: 'Conectado PACS',
-      logo: <Database className="text-indigo-500" size={24} />
-    }
-  ];
-
-  // Filtered Integrations based on Segment Scope
-  const filteredIntegrations = allIntegrations.filter(i => {
-    if (selectedSegment === 'all') return true;
-    return i.segment === selectedSegment || i.segment === 'both';
-  });
-
-  // Filtered Webhooks based on Segment Scope
-  const filteredWebhooks = webhooks.filter(w => {
-    if (selectedSegment === 'all') return true;
-    return w.segment === selectedSegment || w.segment === 'both';
-  });
-
-  const handleSync = async (id: string) => {
-    setSyncingId(id);
-    try {
-      if (id === 'clinicorp') {
-        // Teste real: lê o Clinicorp sem gravar nada
-        const r = await runClinicorpSync({ dryRun: true });
-        addToast(
-          r.ok ? `Clinicorp respondeu: ${r.appointments} agendamentos, ${r.patients} pacientes e ${r.professionals} profissionais.` : (r.message || 'Não foi possível conectar ao Clinicorp.'),
-          r.ok ? 'success' : 'error'
-        );
-        loadClinicorpInfo();
-      } else if (id.includes('google')) {
-        const ok = Boolean(getGoogleUser() && isAccessTokenValid());
-        addToast(ok ? 'Google Agenda conectado e com acesso válido.' : 'Google Agenda não está conectado. Conecte pela tela de Agenda.', ok ? 'success' : 'info');
-      } else {
-        addToast('Esta integração ainda não está configurada neste sistema.', 'info');
-      }
-    } finally {
-      setSyncingId(null);
-    }
-  };
+  if (view === 'clinicorp') return <div><Back title="Clinicorp" /><ClinicorpConfigPanel onBack={() => { setView('hub'); load(); }} /></div>;
+  if (view === 'supabase') return <div><Back title="Banco de dados" /><SupabaseConfigPanel onBack={() => setView('hub')} /></div>;
+  if (view === 'simples_dental') return <div><Back title="Simples Dental" /><SimplesDentalConfigPanel onBack={() => setView('hub')} /></div>;
+  if (view === 'google') {
+    const tabs: [GoogleTab, string][] = [['settings', 'Conexão'], ['mapping', 'Campos do evento'], ['history', 'Histórico']];
+    return (
+      <div>
+        <Back title="Google Agenda" />
+        <div className="flex gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 w-fit mb-5">
+          {tabs.map(([id, label]) => (
+            <button key={id} onClick={() => setGoogleTab(id)} className={cn('px-4 py-1.5 rounded-lg text-xs font-bold cursor-pointer', googleTab === id ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-500 dark:text-slate-400')}>{label}</button>
+          ))}
+        </div>
+        {googleTab === 'settings' && <GoogleIntegrationSettingsPanel onNavigateToMapping={() => setGoogleTab('mapping')} onNavigateToHistory={() => setGoogleTab('history')} />}
+        {googleTab === 'mapping' && <GoogleCalendarMappingPanel />}
+        {googleTab === 'history' && <SyncHistoryTab />}
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-8">
-      {/* Top Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="space-y-6 max-w-6xl">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-900">
-              Isolamento de Contexto & Conectividade
-            </span>
-          </div>
-          <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-            Centro de Integrações
-          </h1>
-          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-            Gerencie as conexões de API, webhooks e sincronizações filtradas exclusivamente pelo contexto ativo.
+          <h1 className="text-2xl font-black tracking-tight text-[var(--color-text-primary)]">Integrações</h1>
+          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+            {focus && currentClinic ? <>Estado das conexões de <strong>{currentClinic.name}</strong>.</> : 'Visão geral de todas as clínicas. Escolha uma clínica no seletor do topo para ver só a dela.'}
           </p>
         </div>
-
-        {/* Tab Navigation */}
-        <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl flex-wrap">
-          <button 
-            onClick={() => setActiveTab('integrations')}
-            className={cn(
-              "px-3 py-1.5 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer", 
-              activeTab === 'integrations' ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs" : "text-slate-600 dark:text-slate-400 hover:text-slate-900"
-            )}
-          >
-            <Database size={13} />
-            <span>Integrações</span>
-          </button>
-
-          <button 
-            onClick={() => setActiveTab('webhooks')}
-            className={cn(
-              "px-3 py-1.5 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer", 
-              activeTab === 'webhooks' ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs" : "text-slate-600 dark:text-slate-400 hover:text-slate-900"
-            )}
-          >
-            <Webhook size={13} />
-            <span>Webhooks</span>
-          </button>
-
-          <button 
-            onClick={() => setActiveTab('simples_dental')}
-            className={cn(
-              "px-3 py-1.5 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer", 
-              activeTab === 'simples_dental' ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs" : "text-slate-600 dark:text-slate-400 hover:text-slate-900"
-            )}
-          >
-            <Database size={13} className="text-emerald-500" />
-            <span>Simples Dental</span>
-          </button>
-
-          <button 
-            onClick={() => setActiveTab('clinicorp')}
-            className={cn(
-              "px-3 py-1.5 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer", 
-              activeTab === 'clinicorp' ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs" : "text-slate-600 dark:text-slate-400 hover:text-slate-900"
-            )}
-          >
-            <Database size={13} className="text-blue-500" />
-            <span>Clinicorp (CEOP)</span>
-          </button>
-
-          <button 
-            onClick={() => setActiveTab('supabase')}
-            className={cn(
-              "px-3 py-1.5 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer", 
-              activeTab === 'supabase' ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs" : "text-slate-600 dark:text-slate-400 hover:text-slate-900"
-            )}
-          >
-            <Cloud size={13} className="text-emerald-500" />
-            <span>Supabase DB</span>
-          </button>
-
-          <button 
-            onClick={() => setActiveTab('settings')}
-            className={cn(
-              "px-3 py-1.5 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer", 
-              activeTab === 'settings' ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs" : "text-slate-600 dark:text-slate-400 hover:text-slate-900"
-            )}
-          >
-            <Settings size={13} />
-            <span>Google Agenda</span>
-          </button>
-
-          <button 
-            onClick={() => setActiveTab('history')}
-            className={cn(
-              "px-3 py-1.5 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer", 
-              activeTab === 'history' ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs" : "text-slate-600 dark:text-slate-400 hover:text-slate-900"
-            )}
-          >
-            <History size={13} />
-            <span>Logs & Histórico</span>
-          </button>
+        <div className="flex items-center gap-2">
+          <span className="px-3 py-1.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">{connected} conectadas</span>
+          {attention > 0 && <span className="px-3 py-1.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">{attention} precisam de atenção</span>}
+          <button onClick={load} aria-label="Atualizar" className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /></button>
         </div>
       </div>
 
-      {/* Segment Isolation Switcher Bar */}
-      <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-200 shrink-0">
-            <Filter size={18} />
-          </div>
-          <div>
-            <h3 className="text-xs font-extrabold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
-              <span>Isolamento por Segmento & Contexto</span>
-              <span className="text-[10px] font-normal text-slate-400 lowercase">(Apenas o que pertence ao contexto ativo é carregado)</span>
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              {selectedSegment === 'ceop' && 'Exibindo unicamente as integrações e webhooks da Central Operacional CEOP.'}
-              {selectedSegment === 'odontologia' && 'Exibindo unicamente as integrações de Odontologia, Clinicorp e sistemas dentais.'}
-              {selectedSegment === 'all' && 'Exibindo visão consolidada de todas as integrações cadastradas.'}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1.5 rounded-2xl self-stretch md:self-auto shrink-0">
-          <button
-            onClick={() => setSelectedSegment('ceop')}
-            className={cn(
-              "px-4 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 cursor-pointer flex-1 md:flex-none justify-center",
-              selectedSegment === 'ceop' 
-                ? "bg-amber-500 text-slate-950 shadow-sm" 
-                : "text-slate-600 dark:text-slate-300 hover:text-slate-900"
-            )}
-          >
-            <PhoneCall size={14} />
-            <span>🏢 Contexto CEOP</span>
-          </button>
-
-          <button
-            onClick={() => setSelectedSegment('odontologia')}
-            className={cn(
-              "px-4 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 cursor-pointer flex-1 md:flex-none justify-center",
-              selectedSegment === 'odontologia' 
-                ? "bg-blue-600 text-white shadow-sm" 
-                : "text-slate-600 dark:text-slate-300 hover:text-slate-900"
-            )}
-          >
-            <Database size={14} />
-            <span>🦷 Odontologia & Clínicas</span>
-          </button>
-
-          <button
-            onClick={() => setSelectedSegment('all')}
-            className={cn(
-              "px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer flex-1 md:flex-none justify-center",
-              selectedSegment === 'all' 
-                ? "bg-slate-800 text-white dark:bg-slate-200 dark:text-slate-900 shadow-sm" 
-                : "text-slate-500 hover:text-slate-800"
-            )}
-          >
-            <span>Todas</span>
-          </button>
-        </div>
-      </div>
-
-      {/* 1. TAB: INTEGRAÇÕES */}
-      {activeTab === 'integrations' && (
-        <div className="space-y-6">
-          {/* Quick Info Box */}
-          <div className="p-4 rounded-2xl bg-blue-50/60 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/40 text-xs text-blue-900 dark:text-blue-200 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <ShieldCheck size={18} className="text-blue-600 dark:text-blue-400 shrink-0" />
-              <span>
-                <strong>Garantia de Isolamento:</strong> Se você está no segmento <strong>{selectedSegment === 'ceop' ? 'CEOP' : selectedSegment === 'odontologia' ? 'Odontologia' : 'Geral'}</strong>, os tokens, webhooks e sincronizações operam exclusivamente para essa camada.
-              </span>
-            </div>
-            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-300 shrink-0">
-              {filteredIntegrations.length} Conexão(ões)
-            </span>
-          </div>
-
-          {/* Integration Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredIntegrations.map((item) => (
-              <div 
-                key={item.id} 
-                onClick={() => {
-                  if (item.id === 'clinicorp') setActiveTab('clinicorp');
-                  if (item.id === 'simples_dental') setActiveTab('simples_dental');
-                }}
-                className={cn(
-                  "bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between space-y-4 transition-all",
-                  (item.id === 'clinicorp' || item.id === 'simples_dental') && "cursor-pointer hover:border-blue-400 dark:hover:border-blue-700"
-                )}
-              >
-                <div>
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <div className="w-12 h-12 rounded-2xl bg-slate-50 dark:bg-slate-800 flex items-center justify-center border border-slate-100 dark:border-slate-700">
-                      {item.logo}
+      {groups.map(group => (
+        <section key={group} className="space-y-3">
+          <h2 className="text-[11px] font-extrabold uppercase tracking-widest text-slate-400">{group}</h2>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {cards.filter(c => c.group === group).map(c => (
+              <div key={c.id} className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 flex flex-col gap-4">
+                <div className="flex items-start gap-4">
+                  <span className={cn('w-11 h-11 shrink-0 rounded-xl text-white flex items-center justify-center', c.accent)}>{c.icon}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">{c.name}</h3>
+                      <span className={cn('shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full text-[10.5px] font-bold', TONE_STYLE[c.tone])}>
+                        {c.tone === 'ok' ? <CheckCircle2 size={12} /> : c.tone === 'warn' ? <AlertTriangle size={12} /> : null}{c.badge}
+                      </span>
                     </div>
-                    <span className={cn(
-                      "px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider",
-                      item.segment === 'ceop' 
-                        ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-                        : "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300"
-                    )}>
-                      {item.segment === 'ceop' ? 'CEOP' : 'Odontologia'}
-                    </span>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{c.description}</p>
                   </div>
-
-                  <h3 className="text-base font-extrabold text-slate-900 dark:text-white tracking-tight">
-                    {item.name}
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                    {item.description}
-                  </p>
                 </div>
-
-                <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-slate-400 font-medium">Status:</span>
-                    {(() => {
-                      const st = integrationState(item.id);
-                      const tone = st.tone === 'ok' ? 'text-emerald-600 dark:text-emerald-400' : st.tone === 'warn' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400';
-                      const dot = st.tone === 'ok' ? 'bg-emerald-500' : st.tone === 'warn' ? 'bg-amber-500' : 'bg-slate-300';
-                      return (
-                        <span className={cn('font-bold flex items-center gap-1', tone)}>
-                          <span className={cn('w-1.5 h-1.5 rounded-full', dot, st.tone === 'ok' && 'animate-pulse')} />
-                          {st.label}
-                        </span>
-                      );
-                    })()}
-                  </div>
-                  {integrationState(item.id).detail && (
-                    <p className="text-[11px] text-slate-400 leading-snug -mt-1">{integrationState(item.id).detail}</p>
-                  )}
-
-                  <button
-                    onClick={() => handleSync(item.id)}
-                    disabled={syncingId === item.id}
-                    className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <RefreshCw size={14} className={syncingId === item.id ? "animate-spin text-blue-600" : ""} />
-                    <span>{syncingId === item.id ? 'Testando...' : 'Testar conexão'}</span>
+                <ul className="space-y-1 text-xs text-slate-600 dark:text-slate-300 pl-[60px]">
+                  {c.facts.map(f => <li key={f}>{f}</li>)}
+                </ul>
+                <div className="pl-[60px]">
+                  <button onClick={c.action.onClick} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold cursor-pointer">
+                    {c.action.label} <ArrowRight size={14} />
                   </button>
                 </div>
               </div>
             ))}
           </div>
-        </div>
-      )}
+        </section>
+      ))}
 
-      {/* 2. TAB: WEBHOOKS */}
-      {activeTab === 'webhooks' && (
-        <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
-            <div>
-              <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
-                Webhooks de Entrada ({selectedSegment === 'ceop' ? 'CEOP Central' : selectedSegment === 'odontologia' ? 'Odontologia' : 'Geral'})
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Endpoints de recebimento imediato de leads e agendamentos via POST JSON.
-              </p>
-            </div>
-            <button
-              onClick={() => setIsNewWebhookModal(true)}
-              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition-all shadow-md shadow-blue-200 dark:shadow-none flex items-center gap-2 cursor-pointer"
-            >
-              <Plus size={16} />
-              <span>Criar Webhook</span>
-            </button>
+      {isAllClinicsView && clinics.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-[11px] font-extrabold uppercase tracking-widest text-slate-400">Por clínica</h2>
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-[10.5px] uppercase tracking-wider text-slate-400 border-b border-slate-200 dark:border-slate-800">
+                  <th className="px-4 py-2.5 font-bold">Clínica</th>
+                  <th className="px-4 py-2.5 font-bold">Clinicorp</th>
+                  <th className="px-4 py-2.5 font-bold">WhatsApp</th>
+                </tr>
+              </thead>
+              <tbody>
+                {clinics.map(c => {
+                  const s = byClinic[c.id];
+                  return (
+                    <tr key={c.id} className="border-b last:border-0 border-slate-100 dark:border-slate-800/70">
+                      <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-100"><span className="flex items-center gap-2"><Building2 size={14} className="text-slate-400" />{c.name}</span></td>
+                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{s?.lastSync ? `${fmtDateTime(s.lastSync)} · ${s.appointments} agend.` : <span className="text-slate-400">Não sincronizado</span>}</td>
+                      <td className="px-4 py-3">{s?.whatsapp ? <span className={cn('px-2 py-0.5 rounded-full text-[10.5px] font-bold', s.whatsapp.active ? TONE_STYLE.ok : TONE_STYLE.warn)}>{s.whatsapp.session}{s.whatsapp.active ? '' : ' (pausada)'}</span> : <span className="text-slate-400">Sem sessão</span>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-
-          <div className="space-y-4">
-            {filteredWebhooks.map((wh) => (
-              <div key={wh.id} className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className={cn(
-                      "px-2 py-0.5 rounded text-[10px] font-extrabold uppercase tracking-wider",
-                      wh.segment === 'ceop' ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" : "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300"
-                    )}>
-                      {wh.segment === 'ceop' ? 'CEOP' : 'Odontologia'}
-                    </span>
-                    <h4 className="font-extrabold text-slate-900 dark:text-white text-sm">{wh.name}</h4>
-                  </div>
-                  <button
-                    onClick={() => handleTestWebhook(wh)}
-                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold rounded-lg text-xs transition-all flex items-center gap-1.5 self-start sm:self-auto cursor-pointer"
-                  >
-                    <Terminal size={13} />
-                    <span>Disparar Teste</span>
-                  </button>
-                </div>
-
-                <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-800/80 p-3 rounded-2xl border border-slate-200/60 dark:border-slate-700/60 overflow-hidden">
-                  <span className="text-xs font-mono text-slate-600 dark:text-slate-300 truncate flex-1">{wh.url}</span>
-                  <button
-                    onClick={() => handleCopyUrl(wh.url, wh.id)}
-                    className="px-2.5 py-1 bg-white dark:bg-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-200 font-bold rounded-lg text-xs transition-all shadow-xs flex items-center gap-1 shrink-0 cursor-pointer"
-                  >
-                    {copiedId === wh.id ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
-                    <span>{copiedId === wh.id ? 'Copiado!' : 'Copiar URL'}</span>
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        </section>
       )}
-
-      {/* 3. TAB: SIMPLES DENTAL */}
-      {activeTab === 'simples_dental' && <SimplesDentalConfigPanel onBack={() => setActiveTab('integrations')} />}
-
-      {/* CLINICORP PANEL */}
-      {activeTab === 'clinicorp' && <ClinicorpConfigPanel onBack={() => setActiveTab('integrations')} />}
-
-      {/* SUPABASE PANEL */}
-      {activeTab === 'supabase' && <SupabaseConfigPanel onBack={() => setActiveTab('integrations')} />}
-
-      {/* 4. TAB: GOOGLE SETTINGS */}
-      {activeTab === 'settings' && <GoogleIntegrationSettingsPanel />}
-
-      {/* 5. TAB: MAPEMENTO GOOGLE */}
-      {activeTab === 'mapping' && <GoogleCalendarMappingPanel />}
-
-      {/* 6. TAB: HISTORICO DE SYNC */}
-      {activeTab === 'history' && <SyncHistoryTab />}
     </div>
   );
 }
