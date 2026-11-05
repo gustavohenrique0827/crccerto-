@@ -14,6 +14,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { useApp } from '@/src/context/AppContext';
+import { fetchOperationalAlerts } from '@/src/lib/supabase';
+import ClinicSwitcher from './ClinicSwitcher';
 
 interface TopbarProps {
   isSidebarCollapsed: boolean;
@@ -43,6 +45,7 @@ export function Topbar({
     user, 
     currentClinic, 
     isAllClinicsView, 
+    clinics,
     confirmLogout,
     setActiveTab
   } = useApp();
@@ -52,11 +55,26 @@ export function Topbar({
   const [activeNotifTab, setActiveNotifTab] = useState<'all' | 'unread' | 'alerts'>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const [notifications, setNotifications] = useState<NotificationItem[]>([
-    { id: '1', title: 'Novo lead qualificado', time: 'Há 5 min', isUnread: true, type: 'alert', desc: 'Lead de implante solicitou agendamento direto.' },
-    { id: '2', title: 'SLA de atendimento excedido', time: 'Há 18 min', isUnread: true, type: 'alert', desc: 'Atendimento aguardando resposta há mais de 15 min.' },
-    { id: '3', title: 'Sincronização de API concluída', time: 'Há 1 hora', isUnread: false, type: 'info', desc: 'Integração Clinicorp processou 42 registros.' }
-  ]);
+  // Alertas reais (conversas sem resposta, sincronização antiga). "Lido" fica só neste navegador.
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [alertTabs, setAlertTabs] = useState<Record<string, string | undefined>>({});
+  const readIds = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const list = await fetchOperationalAlerts();
+      if (cancelled) return;
+      setAlertTabs(Object.fromEntries(list.map(a => [a.id, a.tab])));
+      setNotifications(list.map(a => ({
+        id: a.id, title: a.title, desc: a.desc, type: a.type,
+        time: new Date(a.at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }),
+        isUnread: !readIds.current.has(a.id)
+      })));
+    };
+    load();
+    const t = setInterval(load, 120000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
 
   const notifRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -77,10 +95,14 @@ export function Topbar({
   const unreadCount = notifications.filter(n => n.isUnread).length;
 
   const markAllAsRead = () => {
+    notifications.forEach(n => readIds.current.add(n.id));
     setNotifications(prev => prev.map(n => ({ ...n, isUnread: false })));
   };
 
   const markAsRead = (id: string) => {
+    readIds.current.add(id);
+    const tab = alertTabs[id];
+    if (tab) { setActiveTab(tab); setIsNotifOpen(false); }
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, isUnread: false } : n));
   };
 
@@ -120,6 +142,9 @@ export function Topbar({
         >
           {isSidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
         </button>
+
+        {/* Troca de clínica: só aparece para quem tem mais de uma */}
+        {clinics.length > 1 && <ClinicSwitcher />}
       </div>
 
       {/* Right Controls */}
