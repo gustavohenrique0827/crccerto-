@@ -35,6 +35,18 @@ AS $$
       );
 $$;
 
+-- Versão para colunas clinic_id do tipo TEXT (waha_tenants): texto que não é UUID não dá acesso a ninguém
+CREATE OR REPLACE FUNCTION public.has_clinic_access(target_clinic_id text)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+AS $$
+  SELECT CASE
+    WHEN target_clinic_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      THEN public.has_clinic_access(target_clinic_id::uuid)
+    ELSE public.is_super_admin()
+  END;
+$$;
+
 -- 2) Tabelas com clinic_id: troca a política aberta pela política por clínica
 DO $$
 DECLARE t text;
