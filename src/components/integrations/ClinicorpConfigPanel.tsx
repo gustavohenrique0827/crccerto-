@@ -1,658 +1,198 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Database, 
-  CheckCircle2, 
-  RefreshCw, 
-  Key, 
-  Building2, 
-  ArrowLeft, 
-  ShieldCheck, 
-  Calendar, 
-  Users, 
-  Check,
-  Copy,
-  Terminal,
-  Activity,
-  Webhook,
-  Send,
-  Trash2,
-  Plus,
-  Clock,
-  Play,
-  Pause
-} from 'lucide-react';
-import { Button } from '../ui/Button';
-import { Badge } from '../ui/Badge';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, Building2, CheckCircle2, Copy, KeyRound, Loader2, PlugZap, RefreshCw, Unplug, Zap } from 'lucide-react';
+import { cn } from '../../lib/utils';
 import { useApp } from '../../context/AppContext';
-import { runClinicorpSync } from '../../lib/clinicorpSync';
+import {
+  ClinicIntegration, ClinicorpSyncResult, connectClinicorp, disconnectClinicorp, fetchClinicIntegrations, runClinicorpSync, setClinicorpAutoSync
+} from '../../lib/clinicorpSync';
 
 interface ClinicorpConfigPanelProps {
   onBack: () => void;
 }
 
-interface WebhookEndpoint {
-  id: string;
-  url: string;
-  secret: string;
-  events: string[];
-  isActive: boolean;
-  createdAt: string;
-  lastTriggered?: string;
-}
+const fmt = (iso?: string | null) =>
+  iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
 
-interface WebhookLogEntry {
-  id: string;
-  event: string;
-  status: number;
-  timestamp: string;
-  payload: string;
-}
+const summarize = (r: ClinicorpSyncResult) => {
+  if (!r.ok) return r.message || 'Falha ao sincronizar.';
+  const moved = r.leadsMoved ? r.leadsMoved.agendamento + r.leadsMoved.compareceu + r.leadsMoved.faltou : 0;
+  return [
+    `${r.appointments ?? 0} agendamentos`, `${r.patients ?? 0} pacientes`, `${r.professionals ?? 0} profissionais`,
+    r.blockedSlots ? `${r.blockedSlots} horários fechados` : '',
+    moved ? `${moved} leads movidos no funil (${r.leadsMoved!.agendamento} agendados, ${r.leadsMoved!.compareceu} compareceram, ${r.leadsMoved!.faltou} faltaram)` : ''
+  ].filter(Boolean).join(' · ');
+};
 
-interface CronSyncLog {
-  id: string;
-  timestamp: string;
-  syncedCount: number;
-  status: 'success' | 'warning' | 'error';
-  message: string;
-}
-
-export default function ClinicorpConfigPanel({ onBack }: ClinicorpConfigPanelProps) {
-  const { addToast } = useApp();
-  const [apiKey, setApiKey] = useState(() => { try { return localStorage.getItem('clinicorp_api_key_ceopodontologia') || ''; } catch { return ''; } });
-  const [isTesting, setIsTesting] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success'>('idle');
+export default function ClinicorpConfigPanel({ onBack: _onBack }: ClinicorpConfigPanelProps) {
+  const { clinics, currentClinic, addToast } = useApp();
+  const [clinicId, setClinicId] = useState<string>(() => (currentClinic?.id && clinics.some(c => c.id === currentClinic.id) ? currentClinic.id : clinics[0]?.id || ''));
+  const [items, setItems] = useState<ClinicIntegration[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [subscriber, setSubscriber] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [busy, setBusy] = useState<null | 'connect' | 'sync' | 'test' | 'disconnect'>(null);
+  const [report, setReport] = useState<{ ok: boolean; text: string } | null>(null);
   const [copied, setCopied] = useState(false);
 
-  // Webhook Manager State
-  const [endpoints, setEndpoints] = useState<WebhookEndpoint[]>([
-    {
-      id: 'wh_1',
-      url: 'https://api.crm-ceop.com/webhooks/clinicorp/patients',
-      secret: 'whsec_ceop_live_9f88b3271aa',
-      events: ['patient.updated', 'patient.created', 'appointment.status_changed'],
-      isActive: true,
-      createdAt: '2026-09-20 14:30',
-      lastTriggered: 'Há 5 minutos'
-    }
-  ]);
+  const load = useCallback(async () => { setLoading(true); setItems(await fetchClinicIntegrations()); setLoading(false); }, []);
+  useEffect(() => { load(); }, [load]);
 
-  const [newUrl, setNewUrl] = useState('https://api.ceopodontologia.com.br/v1/webhooks/clinicorp');
-  const [selectedEvents, setSelectedEvents] = useState<string[]>([
-    'patient.updated', 
-    'appointment.status_changed'
-  ]);
-  const [isAddingEndpoint, setIsAddingEndpoint] = useState(false);
+  const current = useMemo(() => items.find(i => i.clinicId === clinicId) || null, [items, clinicId]);
+  const clinic = clinics.find(c => c.id === clinicId);
+  useEffect(() => { setSubscriber(current?.subscriberId || ''); setApiKey(''); setReport(null); }, [clinicId, current?.subscriberId]);
 
-  // Webhook Logs
-  const [logs, setLogs] = useState<WebhookLogEntry[]>([
-    {
-      id: 'log_1',
-      event: 'patient.updated',
-      status: 200,
-      timestamp: '2026-09-25 10:23:14',
-      payload: '{"patient_id": "p_8829", "status": "active", "updated_fields": ["phone", "last_visit"]}'
-    }
-  ]);
-
-  const [simulatingEvent, setSimulatingEvent] = useState(false);
-
-  // Cron Job / Periodic Sync State
-  const [cronActive, setCronActive] = useState(false);
-  const [cronIntervalMinutes, setCronIntervalMinutes] = useState(15);
-  const [cronRunning, setCronRunning] = useState(false);
-  const [lastCronRun, setLastCronRun] = useState('Ainda não executada');
-  const [cronLogs, setCronLogs] = useState<CronSyncLog[]>([]);
-
-  useEffect(() => {
-    localStorage.setItem('clinicorp_api_key_ceopodontologia', apiKey);
-  }, [apiKey]);
-
-  useEffect(() => {
-    if (!cronActive) return;
-    const intervalMs = cronIntervalMinutes * 60 * 1000;
-    const timer = setInterval(() => {
-      runPeriodicSync(true);
-    }, intervalMs);
-    return () => clearInterval(timer);
-  }, [cronActive, cronIntervalMinutes]);
-
-  const summarize = (r: Awaited<ReturnType<typeof runClinicorpSync>>) =>
-    `${r.appointments ?? 0} agendamentos, ${r.patients ?? 0} pacientes e ${r.professionals ?? 0} profissionais`;
-
-  const runPeriodicSync = async (isAutomatic = false) => {
-    setCronRunning(true);
-    const r = await runClinicorpSync();
-    setCronRunning(false);
-    const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
-    setLastCronRun(nowStr);
-    const newLog: CronSyncLog = {
-      id: 'cron_' + Date.now(),
-      timestamp: nowStr,
-      syncedCount: r.appointments ?? 0,
-      status: r.ok ? 'success' : 'error',
-      message: r.ok ? `Clinicorp → CRM: ${summarize(r)}.` : (r.message || 'Falha na sincronização.')
-    };
-    setCronLogs(prev => [newLog, ...prev]);
-    if (!isAutomatic) addToast(r.ok ? `Sincronização concluída: ${summarize(r)}.` : (r.message || 'Falha na sincronização.'), r.ok ? 'success' : 'error');
+  const finish = (r: ClinicorpSyncResult, okText?: string) => {
+    setReport({ ok: r.ok, text: r.ok ? (okText || summarize(r)) : (r.message || 'Falha.') });
+    addToast(r.ok ? (okText || 'Pronto!') : (r.message || 'Falha.'), r.ok ? 'success' : 'error');
   };
 
-  // Teste real: consulta o Clinicorp sem gravar nada no banco
-  const handleTestConnection = async () => {
-    setIsTesting(true);
-    const r = await runClinicorpSync({ dryRun: true });
-    setIsTesting(false);
-    addToast(
-      r.ok ? `Conexão com o Clinicorp OK: encontrei ${summarize(r)} (${r.range?.from} a ${r.range?.to}).` : (r.message || 'Não foi possível conectar ao Clinicorp.'),
-      r.ok ? 'success' : 'error'
-    );
+  const connect = async () => {
+    if (!clinicId || !subscriber.trim() || !apiKey.trim()) { addToast('Preencha o usuário e a chave da API do Clinicorp.', 'error'); return; }
+    setBusy('connect');
+    const r = await connectClinicorp(clinicId, subscriber, apiKey);
+    setBusy(null);
+    finish(r, `Conectado: ${r.professionals ?? 0} profissionais encontrados. Agora clique em Sincronizar agora.`);
+    if (r.ok) { setApiKey(''); load(); }
+  };
+  const sync = async (dryRun: boolean) => {
+    if (!clinicId) return;
+    setBusy(dryRun ? 'test' : 'sync');
+    const r = await runClinicorpSync({ clinicId, dryRun, daysBack: 60, daysForward: 120 });
+    setBusy(null);
+    finish(r, r.ok ? (dryRun ? `Teste ok, nada foi gravado: ${summarize(r)}` : `Sincronizado: ${summarize(r)}`) : undefined);
+    if (!dryRun) load();
+  };
+  const disconnect = async () => {
+    if (!clinicId || !window.confirm(`Desconectar o Clinicorp de ${clinic?.name}? Os dados já importados continuam no sistema.`)) return;
+    setBusy('disconnect');
+    const r = await disconnectClinicorp(clinicId);
+    setBusy(null);
+    finish(r, 'Clinicorp desconectado desta clínica.');
+    load();
+  };
+  const toggleAuto = async () => {
+    if (!current) return;
+    const next = !current.autoSync;
+    setItems(prev => prev.map(i => i.clinicId === clinicId ? { ...i, autoSync: next } : i));
+    const r = await setClinicorpAutoSync(clinicId, next);
+    if (!r.ok) { addToast(r.message || 'Não foi possível salvar.', 'error'); load(); }
   };
 
-  const handleSyncNow = async () => {
-    setSyncStatus('syncing');
-    const r = await runClinicorpSync();
-    setSyncStatus(r.ok ? 'success' : 'idle');
-    addToast(r.ok ? `Clinicorp → CRM concluído: ${summarize(r)}.` : (r.message || 'Falha na sincronização.'), r.ok ? 'success' : 'error');
-    if (r.ok) setTimeout(() => setSyncStatus('idle'), 3000);
-  };
+  const endpoint = typeof window !== 'undefined' ? `${window.location.origin}/api/clinicorp/sync` : '/api/clinicorp/sync';
+  const field = 'w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white';
 
-  const handleCopyKey = () => {
-    navigator.clipboard.writeText(apiKey);
-    setCopied(true);
-    addToast('API Key copiada para a área de transferência!', 'success');
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleAddEndpoint = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newUrl) {
-      addToast('Informe a URL do endpoint do webhook.', 'error');
-      return;
-    }
-
-    const newEp: WebhookEndpoint = {
-      id: 'wh_' + Date.now(),
-      url: newUrl,
-      secret: 'whsec_' + Math.random().toString(36).substring(2, 15),
-      events: selectedEvents,
-      isActive: true,
-      createdAt: new Date().toISOString().replace('T', ' ').substring(0, 16),
-      lastTriggered: 'Nunca'
-    };
-
-    setEndpoints(prev => [newEp, ...prev]);
-    setNewUrl('');
-    setIsAddingEndpoint(false);
-    addToast('Endpoint de webhook configurado com sucesso!', 'success');
-  };
-
-  const handleToggleEndpoint = (id: string) => {
-    setEndpoints(prev => prev.map(ep => ep.id === id ? { ...ep, isActive: !ep.isActive } : ep));
-    addToast('Status do webhook atualizado.', 'info');
-  };
-
-  const handleDeleteEndpoint = (id: string) => {
-    setEndpoints(prev => prev.filter(ep => ep.id !== id));
-    addToast('Endpoint de webhook removido.', 'info');
-  };
-
-  const handleSimulateWebhook = () => {
-    setSimulatingEvent(true);
-    setTimeout(() => {
-      setSimulatingEvent(false);
-      const newLog: WebhookLogEntry = {
-        id: 'log_' + Date.now(),
-        event: 'patient.status_updated',
-        status: 200,
-        timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19),
-        payload: '{"event": "patient.status_updated", "clinic": "CEOP Odontologia", "patient": "Maria Silva", "new_status": "compareceu"}'
-      };
-      setLogs(prev => [newLog, ...prev]);
-      addToast('Evento de teste disparado com sucesso! Webhook processado (HTTP 200).', 'success');
-    }, 1000);
-  };
+  if (clinics.length === 0) return <p className="text-sm text-slate-400">Cadastre uma clínica primeiro.</p>;
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Top Bar with Back Button */}
-      <div className="flex items-center justify-between">
-        <Button
-          variant="outline"
-          size="xs"
-          onClick={onBack}
-        >
-          <ArrowLeft size={14} />
-          <span>Voltar para Integrações</span>
-        </Button>
-        <Badge variant="success">
-          <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] animate-pulse" />
-          <span>Clinicorp CEOP Ativo</span>
-        </Badge>
-      </div>
-
-      {/* Main Header Card */}
-      <div className="bg-[var(--color-surface-elevated)] border border-[var(--color-border-default)] rounded-[var(--radius-panel)] shadow-[var(--shadow-panel)] p-6 space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--color-border-subtle)] pb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-[var(--radius-panel)] bg-[var(--color-primary-blue)]/10 text-[var(--color-primary-blue)] flex items-center justify-center border border-[var(--color-primary-blue)]/25">
-              <Database size={24} />
-            </div>
-            <div>
-              <h2 className="text-lg font-black text-[var(--color-text-primary)] tracking-tight">
-                Clinicorp - CEOP Odontologia
-              </h2>
-              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                Integração oficial de gestão odontológica, prontuários, orçamentos e agenda de dentistas.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={handleTestConnection}
-              disabled={isTesting}
-            >
-              <RefreshCw size={13} className={isTesting ? "animate-spin" : ""} />
-              <span>{isTesting ? 'Validando...' : 'Testar Conexão API'}</span>
-            </Button>
-            <Button
-              size="xs"
-              onClick={handleSyncNow}
-              disabled={syncStatus === 'syncing'}
-            >
-              <Activity size={13} className={syncStatus === 'syncing' ? "animate-spin" : ""} />
-              <span>{syncStatus === 'syncing' ? 'Sincronizando...' : syncStatus === 'success' ? 'Sincronizado!' : 'Sincronizar Agora'}</span>
-            </Button>
-          </div>
-        </div>
-
-        {/* API Credentials Section */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-4">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
-              <Key size={14} className="text-[var(--color-primary-blue)]" />
-              Credenciais da API Clinicorp
-            </h3>
-
-            <div className="space-y-2">
-              <label className="text-[11px] font-bold text-[var(--color-text-muted)]">
-                Chave de API (API Key) - CEOP Odontologia
-              </label>
-              <div className="flex items-center gap-2">
-                <input 
-                  type="text"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  className="w-full px-3 py-2 bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] rounded-[var(--radius-control)] text-xs font-mono text-[var(--color-text-primary)] outline-none focus:ring-2 focus:ring-[var(--color-primary-blue)]"
-                />
-                <Button
-                  size="xs"
-                  variant="outline"
-                  onClick={handleCopyKey}
-                >
-                  {copied ? <Check size={14} className="text-[var(--color-success)]" /> : <Copy size={14} />}
-                  <span>{copied ? 'Copiado' : 'Copiar'}</span>
-                </Button>
-              </div>
-              <p className="text-[10px] text-[var(--color-text-faint)]">
-                Chave oficial vinculada à conta <strong className="text-[var(--color-text-primary)]">ceopodontologia</strong>.
-              </p>
-            </div>
-
-            <div className="p-3.5 rounded-[var(--radius-control)] bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] space-y-2">
-              <div className="flex items-center justify-between text-xs font-bold text-[var(--color-text-primary)]">
-                <span>Status da Sincronização:</span>
-                <span className="text-[var(--color-success)] flex items-center gap-1">
-                  <CheckCircle2 size={14} /> Ativo em tempo real
-                </span>
-              </div>
-              <p className="text-[11px] text-[var(--color-text-muted)]">
-                Última sincronização de prontuários e consultas realizada há 2 minutos.
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
-              <ShieldCheck size={14} className="text-[var(--color-success)]" />
-              Recursos Sincronizados
-            </h3>
-
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between p-3 bg-[var(--color-surface-sunken)] rounded-[var(--radius-control)] text-xs">
-                <span className="font-bold text-[var(--color-text-primary)] flex items-center gap-2">
-                  <Users size={14} className="text-[var(--color-primary-blue)]" />
-                  Prontuários & Pacientes
-                </span>
-                <Badge variant="success">Sincronizado</Badge>
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-[var(--color-surface-sunken)] rounded-[var(--radius-control)] text-xs">
-                <span className="font-bold text-[var(--color-text-primary)] flex items-center gap-2">
-                  <Calendar size={14} className="text-[var(--color-tech-cyan)]" />
-                  Agenda de Dentistas & Consultas
-                </span>
-                <Badge variant="success">Sincronizado</Badge>
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-[var(--color-surface-sunken)] rounded-[var(--radius-control)] text-xs">
-                <span className="font-bold text-[var(--color-text-primary)] flex items-center gap-2">
-                  <Terminal size={14} className="text-[var(--color-warning)]" />
-                  Webhooks & Cron Sync
-                </span>
-                <Badge variant="success">Ativo</Badge>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Cron Job / Periodic Sync Manager for Pending Patients */}
-      <div className="bg-[var(--color-surface-elevated)] border border-[var(--color-border-default)] rounded-[var(--radius-panel)] shadow-[var(--shadow-panel)] p-6 space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--color-border-subtle)] pb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-[var(--radius-control)] bg-[var(--color-warning)]/10 text-[var(--color-warning)] flex items-center justify-center border border-[var(--color-warning)]/25">
-              <Clock size={20} />
-            </div>
-            <div>
-              <h3 className="text-base font-black text-[var(--color-text-primary)] tracking-tight">
-                Sincronização Periódica de Pacientes Pendentes (Cron Job)
-              </h3>
-              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                Consulta programada à API Clinicorp para reconciliação e atualização automática de status pendentes.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              size="xs"
-              variant={cronActive ? "success" : "outline"}
-              onClick={() => {
-                setCronActive(!cronActive);
-                addToast(cronActive ? 'Cron job periódico pausado.' : 'Cron job periódico ativado!', 'info');
-              }}
-            >
-              {cronActive ? <Play size={13} /> : <Pause size={13} />}
-              <span>{cronActive ? 'Cron Ativo' : 'Cron Pausado'}</span>
-            </Button>
-            <Button
-              size="xs"
-              onClick={() => runPeriodicSync(false)}
-              disabled={cronRunning}
-            >
-              <RefreshCw size={13} className={cronRunning ? "animate-spin" : ""} />
-              <span>{cronRunning ? 'Sincronizando...' : 'Executar Cron Agora'}</span>
-            </Button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="p-4 bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] rounded-[var(--radius-panel)] space-y-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">Intervalo de Execução</span>
-            <div className="flex items-center gap-2">
-              <select
-                value={cronIntervalMinutes}
-                onChange={e => setCronIntervalMinutes(Number(e.target.value))}
-                className="w-full px-3 py-1.5 bg-[var(--color-surface-elevated)] border border-[var(--color-border-default)] rounded-[var(--radius-control)] text-xs font-bold text-[var(--color-text-primary)] outline-none cursor-pointer"
-              >
-                <option value={5}>A cada 5 minutos</option>
-                <option value={15}>A cada 15 minutos</option>
-                <option value={30}>A cada 30 minutos</option>
-                <option value={60}>A cada 1 hora</option>
-              </select>
-            </div>
-            <p className="text-[10px] text-[var(--color-text-muted)]">Frequência da consulta automática na API Clinicorp.</p>
-          </div>
-
-          <div className="p-4 bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] rounded-[var(--radius-panel)] space-y-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">Última Execução Bem-Sucedida</span>
-            <p className="text-sm font-black font-mono text-[var(--color-text-primary)] mt-1">{lastCronRun}</p>
-            <p className="text-[10px] text-[var(--color-success)] flex items-center gap-1 font-semibold">
-              <CheckCircle2 size={12} /> Status: OK (Sem falhas de rede)
-            </p>
-          </div>
-
-          <div className="p-4 bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] rounded-[var(--radius-panel)] space-y-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">Estratégia de Reconciliação</span>
-            <p className="text-xs font-bold text-[var(--color-text-primary)]">Polling Incremental + Webhooks</p>
-            <p className="text-[10px] text-[var(--color-text-muted)]">Garante zero perda de eventos caso o webhook falhe.</p>
-          </div>
-        </div>
-
-        {/* Cron Logs */}
-        <div className="space-y-3 pt-2">
-          <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-            Histórico de Execuções do Cron Job
-          </h4>
-          <div className="bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] rounded-[var(--radius-panel)] overflow-hidden">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-[var(--color-surface-elevated)] border-b border-[var(--color-border-default)] text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-                  <th className="px-4 py-2.5">Timestamp</th>
-                  <th className="px-4 py-2.5 text-center">Pacientes Sincronizados</th>
-                  <th className="px-4 py-2.5">Status</th>
-                  <th className="px-4 py-2.5">Mensagem do Processo</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--color-border-subtle)] font-mono text-[11px]">
-                {cronLogs.map(log => (
-                  <tr key={log.id} className="hover:bg-[var(--color-surface-elevated)]/60 transition-colors">
-                    <td className="px-4 py-2.5 font-bold text-[var(--color-text-primary)]">{log.timestamp}</td>
-                    <td className="px-4 py-2.5 text-center font-black text-[var(--color-primary-blue)]">{log.syncedCount} pac.</td>
-                    <td className="px-4 py-2.5">
-                      <Badge variant="success">Sucesso</Badge>
-                    </td>
-                    <td className="px-4 py-2.5 text-[var(--color-text-muted)] font-sans">{log.message}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      {/* Webhook Manager Section */}
-      <div className="bg-[var(--color-surface-elevated)] border border-[var(--color-border-default)] rounded-[var(--radius-panel)] shadow-[var(--shadow-panel)] p-6 space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--color-border-subtle)] pb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-[var(--radius-control)] bg-[var(--color-tech-cyan)]/10 text-[var(--color-tech-cyan)] flex items-center justify-center border border-[var(--color-tech-cyan)]/25">
-              <Webhook size={20} />
-            </div>
-            <div>
-              <h3 className="text-base font-black text-[var(--color-text-primary)] tracking-tight">
-                Gerenciador de Webhooks (Clinicorp API)
-              </h3>
-              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                Configure endpoints para receber atualizações automáticas de status de pacientes e consultas.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={handleSimulateWebhook}
-              disabled={simulatingEvent}
-            >
-              <Send size={13} className={simulatingEvent ? "animate-bounce" : ""} />
-              <span>{simulatingEvent ? 'Disparando...' : 'Simular Evento de Teste'}</span>
-            </Button>
-            <Button
-              size="xs"
-              onClick={() => setIsAddingEndpoint(!isAddingEndpoint)}
-            >
-              <Plus size={13} />
-              <span>Novo Endpoint</span>
-            </Button>
-          </div>
-        </div>
-
-        {/* Add Endpoint Form Modal / Drawer */}
-        {isAddingEndpoint && (
-          <form onSubmit={handleAddEndpoint} className="p-4 bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] rounded-[var(--radius-panel)] space-y-4 animate-fade-in">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-black uppercase tracking-wider text-[var(--color-text-primary)]">
-                Cadastrar Novo Endpoint de Webhook
-              </h4>
-              <button 
-                type="button" 
-                onClick={() => setIsAddingEndpoint(false)}
-                className="text-[var(--color-text-faint)] hover:text-[var(--color-text-primary)]"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-                URL do Endpoint (HTTPS)
-              </label>
-              <input 
-                type="url"
-                value={newUrl}
-                onChange={e => setNewUrl(e.target.value)}
-                placeholder="https://sua-api.com/webhooks/clinicorp"
-                className="w-full px-3 py-2 bg-[var(--color-surface-elevated)] border border-[var(--color-border-default)] rounded-[var(--radius-control)] text-xs text-[var(--color-text-primary)] outline-none focus:ring-2 focus:ring-[var(--color-primary-blue)] font-mono"
-                required
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-                Eventos Inscritos
-              </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                {[
-                  { id: 'patient.created', label: 'patient.created (Novo Paciente)' },
-                  { id: 'patient.updated', label: 'patient.updated (Atualização de Cadastro)' },
-                  { id: 'appointment.scheduled', label: 'appointment.scheduled (Consulta Marcada)' },
-                  { id: 'appointment.status_changed', label: 'appointment.status_changed (Status da Consulta)' }
-                ].map(ev => (
-                  <label key={ev.id} className="flex items-center gap-2 p-2 bg-[var(--color-surface-elevated)] border border-[var(--color-border-default)] rounded-[var(--radius-control)] cursor-pointer">
-                    <input 
-                      type="checkbox"
-                      checked={selectedEvents.includes(ev.id)}
-                      onChange={e => {
-                        if (e.target.checked) {
-                          setSelectedEvents([...selectedEvents, ev.id]);
-                        } else {
-                          setSelectedEvents(selectedEvents.filter(x => x !== ev.id));
-                        }
-                      }}
-                      className="rounded text-[var(--color-primary-blue)]"
-                    />
-                    <span className="font-medium text-[var(--color-text-primary)] truncate">{ev.label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2">
-              <Button size="xs" variant="outline" type="button" onClick={() => setIsAddingEndpoint(false)}>
-                Cancelar
-              </Button>
-              <Button size="xs" type="submit">
-                Salvar Endpoint
-              </Button>
-            </div>
-          </form>
+    <div className="space-y-6 max-w-5xl">
+      {/* Clínica */}
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2 text-xs font-bold text-slate-500 dark:text-slate-400"><Building2 size={14} />Clínica</label>
+        <select value={clinicId} onChange={e => setClinicId(e.target.value)} className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-bold dark:text-white outline-none cursor-pointer">
+          {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        {loading ? <Loader2 size={16} className="animate-spin text-slate-400" /> : (
+          <span className={cn('flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold', current?.hasKey ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400')}>
+            {current?.hasKey ? <><CheckCircle2 size={13} />Conectada</> : 'Sem credenciais'}
+          </span>
         )}
-
-        {/* Endpoints List */}
-        <div className="space-y-3">
-          <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-            Endpoints Ativos ({endpoints.length})
-          </h4>
-          
-          <div className="space-y-2.5">
-            {endpoints.map(ep => (
-              <div key={ep.id} className="p-4 bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] rounded-[var(--radius-panel)] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="space-y-1.5 min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono text-xs font-bold text-[var(--color-text-primary)] truncate">{ep.url}</span>
-                    <Badge variant={ep.isActive ? "success" : "neutral"}>
-                      {ep.isActive ? 'Ativo' : 'Pausado'}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap text-[11px] text-[var(--color-text-muted)]">
-                    <span>Secret: <strong className="font-mono">{ep.secret}</strong></span>
-                    <span>•</span>
-                    <span>Criado em: {ep.createdAt}</span>
-                    <span>•</span>
-                    <span>Último disparo: {ep.lastTriggered}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 pt-1 flex-wrap">
-                    {ep.events.map(ev => (
-                      <span key={ev} className="text-[10px] font-bold px-2 py-0.5 rounded bg-[var(--color-primary-blue)]/10 text-[var(--color-primary-blue)] border border-[var(--color-primary-blue)]/20">
-                        {ev}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0">
-                  <Button 
-                    size="xs" 
-                    variant={ep.isActive ? "outline" : "default"}
-                    onClick={() => handleToggleEndpoint(ep.id)}
-                  >
-                    {ep.isActive ? 'Pausar' : 'Ativar'}
-                  </Button>
-                  <Button 
-                    size="xs" 
-                    variant="danger"
-                    onClick={() => handleDeleteEndpoint(ep.id)}
-                  >
-                    <Trash2 size={13} />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Webhook Logs Section */}
-        <div className="space-y-3 pt-4 border-t border-[var(--color-border-subtle)]">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-              Log de Disparos Recentes
-            </h4>
-            <span className="text-[11px] text-[var(--color-text-faint)]">Processamento automático ativo</span>
-          </div>
-
-          <div className="bg-[var(--color-surface-sunken)] border border-[var(--color-border-default)] rounded-[var(--radius-panel)] overflow-hidden">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-[var(--color-surface-elevated)] border-b border-[var(--color-border-default)] text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-                  <th className="px-4 py-2.5">Evento</th>
-                  <th className="px-4 py-2.5">Status HTTP</th>
-                  <th className="px-4 py-2.5">Timestamp</th>
-                  <th className="px-4 py-2.5">Payload</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--color-border-subtle)] font-mono text-[11px]">
-                {logs.map(log => (
-                  <tr key={log.id} className="hover:bg-[var(--color-surface-elevated)]/60 transition-colors">
-                    <td className="px-4 py-2.5 font-bold text-[var(--color-text-primary)]">
-                      <span className="px-2 py-0.5 rounded bg-[var(--color-success)]/10 text-[var(--color-success)] text-[10px]">
-                        {log.event}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <span className="font-bold text-[var(--color-success)]">HTTP {log.status} OK</span>
-                    </td>
-                    <td className="px-4 py-2.5 text-[var(--color-text-muted)]">{log.timestamp}</td>
-                    <td className="px-4 py-2.5 text-[var(--color-text-faint)] truncate max-w-xs">{log.payload}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
       </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Credenciais */}
+        <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-4">
+          <h3 className="flex items-center gap-2 text-sm font-extrabold text-slate-900 dark:text-white"><KeyRound size={16} />Credenciais do Clinicorp de {clinic?.name}</h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Cada clínica usa o próprio usuário e a própria chave. A chave fica guardada no servidor e não aparece mais depois de salva.</p>
+          <label className="block space-y-1">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Usuário (subscriber_id)</span>
+            <input value={subscriber} onChange={e => setSubscriber(e.target.value)} placeholder="ex.: minhaclinica" className={field} autoComplete="off" />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Chave da API {current?.hasKey && <span className="normal-case font-medium">(já salva: preencha só para trocar)</span>}</span>
+            <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder={current?.hasKey ? '••••••••••••' : 'Cole a chave'} className={field} autoComplete="new-password" />
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={connect} disabled={busy !== null} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold disabled:opacity-50 cursor-pointer">
+              {busy === 'connect' ? <Loader2 size={14} className="animate-spin" /> : <PlugZap size={14} />}Testar e salvar
+            </button>
+            {current?.hasKey && (
+              <button onClick={disconnect} disabled={busy !== null} className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-rose-300 dark:border-rose-900 text-rose-600 text-xs font-bold hover:bg-rose-50 dark:hover:bg-rose-950/30 disabled:opacity-50 cursor-pointer">
+                <Unplug size={14} />Desconectar
+              </button>
+            )}
+          </div>
+        </section>
+
+        {/* Sincronização */}
+        <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-4">
+          <h3 className="flex items-center gap-2 text-sm font-extrabold text-slate-900 dark:text-white"><RefreshCw size={16} />Sincronização</h3>
+          <dl className="grid grid-cols-[130px_1fr] gap-y-1.5 text-xs">
+            <dt className="text-slate-400">Última execução</dt><dd className="font-semibold text-slate-800 dark:text-slate-100">{fmt(current?.lastSyncAt)}</dd>
+            <dt className="text-slate-400">Resultado</dt>
+            <dd className={cn('font-semibold', current?.lastStatus === 'error' ? 'text-rose-600' : 'text-slate-800 dark:text-slate-100')}>{current?.lastStatus === 'ok' ? 'Sucesso' : current?.lastStatus === 'error' ? `Falhou: ${current.lastMessage}` : '—'}</dd>
+          </dl>
+          <label className={cn('flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-700', !current?.hasKey && 'opacity-50')}>
+            <span className="text-xs"><span className="block font-bold text-slate-800 dark:text-slate-100">Sincronização automática</span><span className="text-slate-500 dark:text-slate-400">Atualiza a agenda sozinha e move os leads no funil conforme a agenda.</span></span>
+            <button type="button" disabled={!current?.hasKey} onClick={toggleAuto} aria-pressed={!!current?.autoSync} className={cn('w-11 h-6 rounded-full p-0.5 transition-colors shrink-0 cursor-pointer', current?.autoSync ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-700')}>
+              <span className={cn('block w-5 h-5 rounded-full bg-white transition-transform', current?.autoSync && 'translate-x-5')} />
+            </button>
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => sync(false)} disabled={busy !== null} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold disabled:opacity-50 cursor-pointer">
+              {busy === 'sync' ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}Sincronizar agora
+            </button>
+            <button onClick={() => sync(true)} disabled={busy !== null} className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 cursor-pointer">
+              Só testar (não grava)
+            </button>
+          </div>
+          {report && (
+            <p className={cn('flex items-start gap-2 text-xs font-semibold rounded-lg p-3', report.ok ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300' : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300')}>
+              {report.ok ? <CheckCircle2 size={14} className="mt-0.5 shrink-0" /> : <AlertTriangle size={14} className="mt-0.5 shrink-0" />}{report.text}
+            </p>
+          )}
+        </section>
+      </div>
+
+      {/* Automação */}
+      <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-3">
+        <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">Como a automação funciona</h3>
+        <ul className="text-xs text-slate-600 dark:text-slate-300 space-y-1.5 list-disc pl-5">
+          <li>A cada sincronização o sistema traz agenda, pacientes, profissionais, status e etiquetas do Clinicorp.</li>
+          <li>O lead acompanha a consulta mais recente do telefone dele: <strong>agendada → Agendado</strong>, <strong>atendida → Compareceu</strong>, <strong>faltou → Faltou</strong>. Vendido e Desqualificado nunca são alterados.</li>
+          <li>A Vercel sincroniza todas as clínicas conectadas uma vez por dia. Para atualizar de 15 em 15 minutos, crie no n8n um agendador (Schedule Trigger) que chame o endereço abaixo.</li>
+        </ul>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <code className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 break-all">GET {endpoint}</code>
+          <button onClick={() => { navigator.clipboard.writeText(endpoint); setCopied(true); setTimeout(() => setCopied(false), 1500); }} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 font-bold text-slate-600 dark:text-slate-300 cursor-pointer"><Copy size={13} />{copied ? 'Copiado' : 'Copiar'}</button>
+        </div>
+        <p className="text-[11px] text-slate-400">Cabeçalho: <code>Authorization: Bearer &lt;CRON_SECRET&gt;</code>. O CRON_SECRET é uma variável do projeto na Vercel (você define o valor).</p>
+      </section>
+
+      {/* Todas as clínicas */}
+      {clinics.length > 1 && (
+        <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-[10.5px] uppercase tracking-wider text-slate-400 border-b border-slate-200 dark:border-slate-800">
+                <th className="px-4 py-2.5 font-bold">Clínica</th><th className="px-4 py-2.5 font-bold">Usuário Clinicorp</th><th className="px-4 py-2.5 font-bold">Automática</th><th className="px-4 py-2.5 font-bold">Última sincronização</th>
+              </tr>
+            </thead>
+            <tbody>
+              {clinics.map(c => {
+                const it = items.find(i => i.clinicId === c.id);
+                return (
+                  <tr key={c.id} onClick={() => setClinicId(c.id)} className={cn('border-b last:border-0 border-slate-100 dark:border-slate-800/70 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40', c.id === clinicId && 'bg-blue-50/60 dark:bg-blue-950/20')}>
+                    <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-100">{c.name}</td>
+                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{it?.hasKey ? it.subscriberId : <span className="text-slate-400">Não conectada</span>}</td>
+                    <td className="px-4 py-3">{it?.hasKey ? (it.autoSync ? 'Ligada' : 'Desligada') : '—'}</td>
+                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{fmt(it?.lastSyncAt)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </section>
+      )}
     </div>
   );
 }
