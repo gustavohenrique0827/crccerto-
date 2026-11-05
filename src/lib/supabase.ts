@@ -1383,3 +1383,58 @@ export async function fetchWhatsappSessions(clinicId?: string): Promise<{ id: st
   if (error) return [];
   return (data || []).map((r: any) => ({ id: r.id, name: r.nome, session: r.waha_session, active: !!r.ativo, clinicId: r.clinic_id }));
 }
+
+// ---------------------------------------------------------------------
+// Alertas operacionais (sino do topo): calculados dos dados reais
+// ---------------------------------------------------------------------
+
+export interface OperationalAlert {
+  id: string;
+  title: string;
+  desc: string;
+  type: 'alert' | 'info';
+  at: string; // ISO
+  tab?: string; // aba que resolve o alerta
+}
+
+export async function fetchOperationalAlerts(): Promise<OperationalAlert[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const out: OperationalAlert[] = [];
+  const now = Date.now();
+
+  // 1) Conversas em que o cliente escreveu por último e ninguém respondeu há mais de 15 min
+  const since = new Date(now - 48 * 3600 * 1000).toISOString();
+  const { data: msgs } = await sb.from('lead_interactions')
+    .select('lead_id,interaction_type,created_at')
+    .in('interaction_type', ['mensagem_cliente', 'mensagem_responsavel'])
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(1500);
+  const lastByLead = new Map<string, { type: string; at: string }>();
+  (msgs || []).forEach((m: any) => { if (!lastByLead.has(m.lead_id)) lastByLead.set(m.lead_id, { type: m.interaction_type, at: m.created_at }); });
+  const waiting = [...lastByLead.values()].filter(v => v.type === 'mensagem_cliente' && now - new Date(v.at).getTime() > 15 * 60000);
+  if (waiting.length > 0) {
+    const oldest = waiting.reduce((a, b) => (a.at < b.at ? a : b));
+    const hours = Math.floor((now - new Date(oldest.at).getTime()) / 3600000);
+    out.push({
+      id: 'unanswered',
+      title: `${waiting.length} ${waiting.length === 1 ? 'conversa aguardando' : 'conversas aguardando'} resposta`,
+      desc: `A mais antiga espera há ${hours >= 1 ? `${hours} h` : 'menos de 1 h'}. Abra a Mensageria para responder.`,
+      type: 'alert', at: oldest.at, tab: 'mensageria'
+    });
+  }
+
+  // 2) Sincronização do Clinicorp antiga
+  const { data: last } = await sb.from('appointments').select('updated_at').not('clinicorp_id', 'is', null).order('updated_at', { ascending: false }).limit(1);
+  const lastSync = last?.[0]?.updated_at as string | undefined;
+  if (lastSync && now - new Date(lastSync).getTime() > 48 * 3600000) {
+    out.push({
+      id: 'clinicorp-stale',
+      title: 'Agenda do Clinicorp desatualizada',
+      desc: `Última sincronização em ${new Date(lastSync).toLocaleDateString('pt-BR')}. Sincronize em Integrações.`,
+      type: 'info', at: lastSync, tab: 'integracoes'
+    });
+  }
+  return out;
+}
