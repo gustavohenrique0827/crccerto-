@@ -6,6 +6,7 @@ import { cn } from '../../lib/utils';
 import { useApp } from '../../context/AppContext';
 import { getGoogleUser, isAccessTokenValid } from '../../lib/googleAuth';
 import { fetchWhatsappSessions, getSupabase, isSupabaseConfigured } from '../../lib/supabase';
+import { ClinicIntegration, fetchClinicIntegrations } from '../../lib/clinicorpSync';
 import GoogleIntegrationSettingsPanel from './GoogleIntegrationSettingsPanel';
 import GoogleCalendarMappingPanel from './GoogleCalendarMappingPanel';
 import SyncHistoryTab from './SyncHistoryTab';
@@ -47,6 +48,7 @@ export default function IntegrationsWorkspace() {
   const [googleTab, setGoogleTab] = useState<GoogleTab>('settings');
   const [loading, setLoading] = useState(true);
   const [byClinic, setByClinic] = useState<Record<string, ClinicStatus>>({});
+  const [integrations, setIntegrations] = useState<ClinicIntegration[]>([]);
   const [msgs24h, setMsgs24h] = useState<number | null>(null);
   const [lastMsgAt, setLastMsgAt] = useState<string | null>(null);
 
@@ -55,6 +57,7 @@ export default function IntegrationsWorkspace() {
     const sb = getSupabase();
     if (!sb) { setLoading(false); return; }
     const sessions = await fetchWhatsappSessions();
+    setIntegrations(await fetchClinicIntegrations());
     const result: Record<string, ClinicStatus> = {};
     await Promise.all(clinics.map(async c => {
       const [last, count] = await Promise.all([
@@ -92,6 +95,8 @@ export default function IntegrationsWorkspace() {
     const apts = scope.reduce((n, s) => n + s.appointments, 0);
     const wa = scope.map(s => s.whatsapp).filter(Boolean) as { session: string; active: boolean }[];
     const waActive = wa.some(w => w.active);
+    const connectedClinics = integrations.filter(i => i.hasKey && (!focus || i.clinicId === currentClinic?.id)).length;
+    const autoClinics = integrations.filter(i => i.hasKey && i.autoSync && (!focus || i.clinicId === currentClinic?.id)).length;
     const syncAgeH = lastSync ? (Date.now() - new Date(lastSync).getTime()) / 3600000 : null;
 
     return [
@@ -100,7 +105,10 @@ export default function IntegrationsWorkspace() {
         description: 'Agenda, pacientes, profissionais, status e etiquetas: a fonte oficial dos atendimentos.',
         tone: !lastSync ? 'off' : syncAgeH! > 48 ? 'warn' : 'ok',
         badge: !lastSync ? 'Nunca sincronizado' : syncAgeH! > 48 ? 'Sincronização antiga' : 'Conectado',
-        facts: lastSync ? [`Última sincronização: ${fmtDateTime(lastSync)}`, `${apts} agendamentos importados`] : ['Faça a primeira sincronização para trazer a agenda'],
+        facts: [
+          ...(lastSync ? [`Última sincronização: ${fmtDateTime(lastSync)}`, `${apts} agendamentos importados`] : ['Faça a primeira sincronização para trazer a agenda']),
+          `${connectedClinics} de ${clinics.length} ${clinics.length === 1 ? 'clínica conectada' : 'clínicas conectadas'}${autoClinics ? ` · ${autoClinics} com sincronização automática` : ''}`
+        ],
         icon: <Stethoscope size={22} />, accent: 'bg-sky-500',
         action: { label: 'Configurar e sincronizar', onClick: () => setView('clinicorp') }
       },
@@ -144,7 +152,7 @@ export default function IntegrationsWorkspace() {
         action: { label: 'Configurar', onClick: () => setView('simples_dental') }
       }
     ];
-  }, [byClinic, focus, msgs24h, lastMsgAt, googleOk, supabaseOk, setActiveTab]);
+  }, [byClinic, integrations, clinics.length, currentClinic?.id, focus, msgs24h, lastMsgAt, googleOk, supabaseOk, setActiveTab]);
 
   const connected = cards.filter(c => c.tone === 'ok').length;
   const attention = cards.filter(c => c.tone === 'warn').length;

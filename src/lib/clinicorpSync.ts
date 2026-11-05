@@ -12,20 +12,33 @@ export interface ClinicorpSyncResult {
   tags?: number;
   warning?: string;
   range?: { from: string; to: string };
+  /** Leads que a automação moveu de etapa conforme a agenda */
+  leadsMoved?: { agendamento: number; compareceu: number; faltou: number };
+}
+
+export interface ClinicIntegration {
+  clinicId: string;
+  subscriberId: string | null;
+  hasKey: boolean;
+  enabled: boolean;
+  autoSync: boolean;
+  lastSyncAt: string | null;
+  lastStatus: 'ok' | 'error' | null;
+  lastMessage: string | null;
 }
 
 /** Chama a função do servidor (/api/clinicorp/sync) com a sessão do usuário logado. */
-export async function runClinicorpSync(opts: { dryRun?: boolean; daysBack?: number; daysForward?: number } = {}): Promise<ClinicorpSyncResult> {
+async function callServer(body: Record<string, unknown>): Promise<ClinicorpSyncResult> {
   const sb = getSupabase();
   const { data } = (await sb?.auth.getSession()) || { data: { session: null } };
   const token = data.session?.access_token;
-  if (!token) return { ok: false, message: 'Entre no sistema (login do Supabase) para sincronizar com o Clinicorp.' };
+  if (!token) return { ok: false, message: 'Entre no sistema (login do Supabase) para usar o Clinicorp.' };
 
   try {
     const res = await fetch('/api/clinicorp/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(opts)
+      body: JSON.stringify(body)
     });
     const json = await res.json().catch(() => null);
     if (!json) return { ok: false, message: `O servidor respondeu ${res.status} sem detalhes. A função /api/clinicorp/sync está publicada no Vercel?` };
@@ -33,4 +46,29 @@ export async function runClinicorpSync(opts: { dryRun?: boolean; daysBack?: numb
   } catch (e: any) {
     return { ok: false, message: e?.message || 'Não foi possível falar com o servidor.' };
   }
+}
+
+export function runClinicorpSync(opts: { clinicId: string; dryRun?: boolean; daysBack?: number; daysForward?: number }) {
+  return callServer({ action: 'sync', ...opts });
+}
+export function connectClinicorp(clinicId: string, subscriberId: string, apiKey: string, autoSync = true) {
+  return callServer({ action: 'connect', clinicId, subscriberId, apiKey, autoSync });
+}
+export function disconnectClinicorp(clinicId: string) {
+  return callServer({ action: 'disconnect', clinicId });
+}
+export function setClinicorpAutoSync(clinicId: string, autoSync: boolean) {
+  return callServer({ action: 'settings', clinicId, autoSync });
+}
+
+/** Estado da conexão de cada clínica (a view não expõe a chave). */
+export async function fetchClinicIntegrations(): Promise<ClinicIntegration[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const { data, error } = await sb.from('clinic_integrations_public').select('*').eq('provider', 'clinicorp');
+  if (error) return []; // migration ainda não rodada
+  return (data || []).map((r: any) => ({
+    clinicId: r.clinic_id, subscriberId: r.subscriber_id, hasKey: !!r.has_key, enabled: !!r.enabled, autoSync: !!r.auto_sync,
+    lastSyncAt: r.last_sync_at, lastStatus: r.last_status, lastMessage: r.last_message
+  }));
 }
