@@ -1323,3 +1323,63 @@ export function useSupabaseDashboardStats(clinicId?: string, range?: string) {
 
   return { stats, health, loading };
 }
+
+// ---------------------------------------------------------------------
+// Mensageria (conversas de WhatsApp registradas pelo agente n8n/WAHA)
+// ---------------------------------------------------------------------
+
+export interface ConversationRow {
+  id: string;
+  leadId: string;
+  type: 'mensagem_cliente' | 'mensagem_responsavel' | 'nota' | 'mudanca_etapa';
+  message: string;
+  createdAt: string;
+}
+
+/** Todas as mensagens, notas e mudanças de etapa (a RLS limita ao que o usuário pode ver). */
+export async function fetchConversationRows(): Promise<ConversationRow[] | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  try {
+    const rows = await fetchAllRows((a, b) =>
+      sb.from('lead_interactions')
+        .select('id,lead_id,interaction_type,message,created_at')
+        .in('interaction_type', ['mensagem_cliente', 'mensagem_responsavel', 'nota', 'mudanca_etapa'])
+        .order('created_at', { ascending: false })
+        .order('id')
+        .range(a, b)
+    );
+    return rows.map((r: any) => ({
+      id: r.id, leadId: r.lead_id, type: r.interaction_type, message: r.message || '', createdAt: r.created_at
+    }));
+  } catch (e: any) {
+    console.error('Erro ao carregar conversas:', e?.message);
+    return null;
+  }
+}
+
+/** Registra no histórico uma mensagem enviada pela equipe. */
+export async function addOutgoingMessage(leadId: string, text: string, userId?: string): Promise<boolean> {
+  const sb = getSupabase();
+  if (!sb || !isUuid(leadId) || !text.trim()) return false;
+  const { error } = await sb.from('lead_interactions').insert([{
+    lead_id: leadId,
+    user_id: isUuid(userId) ? userId : null,
+    channel: 'whatsapp',
+    message: text.trim(),
+    interaction_type: 'mensagem_responsavel'
+  }]);
+  if (error) console.error('Erro ao registrar mensagem enviada:', error.message);
+  return !error;
+}
+
+/** Sessões de WhatsApp (WAHA) cadastradas para o agente. */
+export async function fetchWhatsappSessions(clinicId?: string): Promise<{ id: string; name: string; session: string; active: boolean; clinicId: string }[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  let q = sb.from('waha_tenants').select('id,nome,waha_session,ativo,clinic_id');
+  if (clinicId && clinicId !== 'all') q = q.eq('clinic_id', clinicId);
+  const { data, error } = await q;
+  if (error) return [];
+  return (data || []).map((r: any) => ({ id: r.id, name: r.nome, session: r.waha_session, active: !!r.ativo, clinicId: r.clinic_id }));
+}

@@ -25,6 +25,7 @@ import LeadDetail from './components/leads/LeadDetail';
 const PatientsList = lazy(() => import('./components/patients/PatientsList'));
 const AgendaPage = lazy(() => import('./components/appointments/AgendaPage'));
 const FollowUpWorkspace = lazy(() => import('./components/followups/FollowUpWorkspace'));
+const MessagingWorkspace = lazy(() => import('./components/messaging/MessagingWorkspace'));
 const TaskWorkspace = lazy(() => import('./components/tasks/TaskWorkspace'));
 const DataAnalysisWorkspace = lazy(() => import('./components/analytics/DataAnalysisWorkspace'));
 const AnalyticsCenter = lazy(() => import('./components/analytics/AnalyticsCenter'));
@@ -150,7 +151,7 @@ export default function App() {
         )}
 
         {/* Dynamic Content Workspace */}
-        <div className={cn("flex-1 min-h-0 overflow-y-auto relative z-10 custom-scrollbar", activeTab === 'agenda' ? "p-2 md:p-3 pb-20 sm:pb-3" : "p-4 md:p-8 pb-24 sm:pb-8")}>
+        <div className={cn("flex-1 min-h-0 overflow-y-auto relative z-10 custom-scrollbar", (activeTab === 'agenda' || activeTab === 'mensageria') ? "p-2 md:p-3 pb-20 sm:pb-3" : "p-4 md:p-8 pb-24 sm:pb-8")}>
           <Suspense fallback={<div className="h-64 flex items-center justify-center"><div className="animate-spin rounded-full h-7 w-7 border-b-2 border-[var(--color-primary-blue)]" /></div>}>
           <AnimatePresence mode="wait">
             {activeTab === 'dashboard' ? (
@@ -231,6 +232,19 @@ export default function App() {
                   className="h-full"
                 >
                   <AgendaPage />
+                </motion.div>
+              </ProtectedModuleRoute>
+            ) : activeTab === 'mensageria' ? (
+              <ProtectedModuleRoute moduleId="mensageria">
+                <motion.div
+                  key="mensageria"
+                  initial={{ opacity: 0, scale: 0.99 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.99 }}
+                  transition={{ duration: 0.18 }}
+                  className="h-full"
+                >
+                  <MessagingWorkspace />
                 </motion.div>
               </ProtectedModuleRoute>
             ) : activeTab === 'followups' ? (
