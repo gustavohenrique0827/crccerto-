@@ -89,13 +89,15 @@ async function fetchAll(sb: any, table: string, columns: string, clinicId: strin
 }
 
 const RANK: Record<string, number> = { novo: 0, contatado: 1, '1_contato': 1, '2_contato': 2, '3_contato': 3, interagiu: 4, agendou: 5, agendamento: 5 };
-const LABEL: Record<string, string> = { agendamento: 'Agendado', compareceu: 'Compareceu', faltou: 'Faltou' };
+const LABEL: Record<string, string> = { agendamento: 'Agendado', compareceu: 'Compareceu', faltou: 'Follow-up (faltou)' };
+// Quem faltou volta para o Follow-up (no banco a etapa Follow-up é '2_contato'); "Comprou" é sempre manual
+const DB_STATUS: Record<string, string> = { agendamento: 'agendamento', compareceu: 'compareceu', faltou: '2_contato' };
 const phoneKey = (v: any) => { const d = String(v || '').replace(/\D/g, ''); return d.length >= 8 ? d.slice(-8) : ''; };
 
 /**
  * Automação do funil: o lead acompanha o que acontece na agenda do Clinicorp.
  * Usa a consulta mais recente do paciente (mesmo telefone, 8 últimos dígitos):
- *   agendada/confirmada -> "Agendado"; atendida -> "Compareceu"; faltou -> "Faltou".
+ *   agendada/confirmada -> "Agendado"; atendida -> "Compareceu"; faltou -> "Follow-up". "Vendido" é sempre manual.
  * Nunca mexe em Vendido nem Desqualificado e nunca faz o lead voltar para uma etapa anterior ao contato.
  */
 async function advanceLeadStages(sb: any, clinicId: string, appointments: any[]) {
@@ -129,12 +131,12 @@ async function advanceLeadStages(sb: any, clinicId: string, appointments: any[])
     const cur = String(l.status);
     if (cur === 'vendido' || cur === 'comprou' || cur === 'desqualificado' || cur === 'perdido') continue;
     const target = apt.status === 'attended' ? 'compareceu' : apt.status === 'missed' ? 'faltou' : 'agendamento';
-    if (target === cur || (target === 'agendamento' && cur === 'agendou')) continue;
+    if (DB_STATUS[target] === cur || (target === 'agendamento' && cur === 'agendou')) continue;
     const rank = RANK[cur];
     const ok =
       target === 'agendamento' ? (rank !== undefined && rank <= 4) || cur === 'faltou' :
       target === 'compareceu' ? (rank !== undefined && rank <= 5) || cur === 'faltou' :
-      /* faltou */ rank !== undefined && rank <= 5;
+      /* faltou -> follow-up */ rank !== undefined && rank <= 5;
     if (ok) moves[target].push(l.id);
   }
 
@@ -146,7 +148,7 @@ async function advanceLeadStages(sb: any, clinicId: string, appointments: any[])
   for (const [target, ids] of Object.entries(moves)) {
     for (let i = 0; i < ids.length; i += 200) {
       const chunk = ids.slice(i, i + 200);
-      const { error } = await sb.from('leads').update({ status: target }).in('id', chunk);
+      const { error } = await sb.from('leads').update({ status: DB_STATUS[target] }).in('id', chunk);
       if (error) throw new Error(`leads: ${error.message}`);
       await sb.from('lead_interactions').insert(chunk.map(id => ({
         lead_id: id, channel: 'sistema', interaction_type: 'mudanca_etapa', message: `Automático (agenda do Clinicorp): ${LABEL[target]}`

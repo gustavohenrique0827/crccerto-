@@ -22,6 +22,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/src/lib/utils';
 import { useApp } from '@/src/context/AppContext';
 import { exportToCSV } from '@/src/lib/exportUtils';
+import { MessageCircle as MessageIcon } from 'lucide-react';
 import TaskModal from '../dashboard/TaskModal';
 
 import { useTasks, CrmTask, dueState } from '@/src/lib/tasksStore';
@@ -30,7 +31,7 @@ import { isSupabaseConfigured, newUuid } from '@/src/lib/supabase';
 type Task = CrmTask;
 
 export default function TaskWorkspace() {
-  const { clinics, user, addToast, currentClinicId } = useApp();
+  const { clinics, user, addToast, currentClinicId, openMessaging } = useApp();
   const [view, setView] = useState<'list' | 'kanban'>('list');
   const [activeFilter, setActiveFilter] = useState<'all' | 'today' | 'pending' | 'completed'>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -285,7 +286,14 @@ export default function TaskWorkspace() {
                           {task.title}
                         </p>
                         {task.patientName && (
-                          <p className="text-[10px] text-blue-500 font-bold mt-1 uppercase tracking-tighter">Paciente: {task.patientName}</p>
+                          <p className="flex items-center gap-2 text-[10px] text-blue-500 font-bold mt-1 uppercase tracking-tighter">
+                            Paciente: {task.patientName}
+                            <button
+                              onClick={(e) => { e.stopPropagation(); openMessaging({ leadId: task.leadId, name: task.patientName, phone: /Tel:\s*([\d+()\s-]{8,})/.exec(task.description || '')?.[1]?.trim() }); }}
+                              className="normal-case tracking-normal flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 hover:bg-emerald-100 cursor-pointer"
+                              title="Abrir a conversa na Mensageria"
+                            ><MessageIcon size={11} />Mensagem</button>
+                          </p>
                         )}
                         {task.description && (
                           <p className="text-xs text-slate-400 line-clamp-1 mt-0.5">{task.description}</p>

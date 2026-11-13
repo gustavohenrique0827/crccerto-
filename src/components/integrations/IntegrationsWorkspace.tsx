@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, ArrowLeft, ArrowRight, Building2, Calendar, CheckCircle2, Database, MessageCircle, PlugZap, RefreshCw, Stethoscope
+  AlertTriangle, ArrowLeft, ArrowRight, Building2, Calendar, CheckCircle2, Database, MessageCircle, PlugZap, RefreshCw, Stethoscope, Zap
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useApp } from '../../context/AppContext';
@@ -13,8 +13,9 @@ import SyncHistoryTab from './SyncHistoryTab';
 import SimplesDentalConfigPanel from './SimplesDentalConfigPanel';
 import ClinicorpConfigPanel from './ClinicorpConfigPanel';
 import SupabaseConfigPanel from './SupabaseConfigPanel';
+import AgentUsagePanel from './AgentUsagePanel';
 
-type View = 'hub' | 'clinicorp' | 'google' | 'supabase' | 'simples_dental';
+type View = 'hub' | 'clinicorp' | 'google' | 'supabase' | 'simples_dental' | 'agent';
 type GoogleTab = 'settings' | 'mapping' | 'history';
 type Tone = 'ok' | 'warn' | 'off';
 
@@ -126,6 +127,14 @@ export default function IntegrationsWorkspace() {
         action: { label: 'Abrir Mensageria', onClick: () => setActiveTab('mensageria') }
       },
       {
+        id: 'agent-usage', name: 'Consumo do agente (estimado)', group: 'Mensageria',
+        description: 'Quanto o agente de WhatsApp consome por clínica no mês, com limite e aviso quando chegar perto.',
+        tone: 'off', badge: 'Estimativa',
+        facts: ['Calculado pelas mensagens gravadas; o valor exato fica na OpenAI'],
+        icon: <Zap size={22} />, accent: 'bg-amber-500',
+        action: { label: 'Ver consumo e limites', onClick: () => setView('agent') }
+      },
+      {
         id: 'google', name: 'Google Agenda', group: 'Agenda',
         description: 'Envia os agendamentos para o Google Agenda da equipe e traz eventos de volta.',
         tone: googleOk ? 'ok' : 'off',
@@ -168,6 +177,7 @@ export default function IntegrationsWorkspace() {
   );
 
   if (view === 'clinicorp') return <div><Back title="Clinicorp" /><ClinicorpConfigPanel onBack={() => { setView('hub'); load(); }} /></div>;
+  if (view === 'agent') return <div><Back title="Consumo do agente" /><AgentUsagePanel /></div>;
   if (view === 'supabase') return <div><Back title="Banco de dados" /><SupabaseConfigPanel onBack={() => setView('hub')} /></div>;
   if (view === 'simples_dental') return <div><Back title="Simples Dental" /><SimplesDentalConfigPanel onBack={() => setView('hub')} /></div>;
   if (view === 'google') {

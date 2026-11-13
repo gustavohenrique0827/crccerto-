@@ -1450,3 +1450,53 @@ export async function fetchOperationalAlerts(): Promise<OperationalAlert[]> {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------
+// Consumo do agente (estimativa pelas mensagens gravadas)
+// ---------------------------------------------------------------------
+
+export interface AgentUsageRow { clinicId: string; day: string; messages: number }
+
+export async function fetchAgentUsage(sinceISO: string): Promise<AgentUsageRow[] | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  try {
+    const [msgs, leads] = await Promise.all([
+      fetchAllRows((a, b) => sb.from('lead_interactions').select('lead_id,created_at').in('interaction_type', ['mensagem_cliente', 'mensagem_responsavel']).gte('created_at', sinceISO).order('created_at').order('id').range(a, b)),
+      fetchAllRows((a, b) => sb.from('leads').select('id,clinic_id').order('id').range(a, b))
+    ]);
+    const clinicOf = new Map<string, string>(leads.map((l: any) => [l.id, l.clinic_id]));
+    const acc = new Map<string, number>();
+    msgs.forEach((m: any) => {
+      const c = clinicOf.get(m.lead_id);
+      if (!c) return;
+      const k = `${c}|${localDay(m.created_at)}`;
+      acc.set(k, (acc.get(k) || 0) + 1);
+    });
+    return [...acc].map(([k, messages]) => { const [clinicId, day] = k.split('|'); return { clinicId, day, messages }; });
+  } catch (e: any) {
+    console.error('Erro ao calcular consumo do agente:', e?.message);
+    return null;
+  }
+}
+
+export interface AgentBudget { costPerMessageUsd: number; monthlyLimitUsd: number; usdBrl: number }
+export const DEFAULT_AGENT_BUDGET: AgentBudget = { costPerMessageUsd: 0.002, monthlyLimitUsd: 8, usdBrl: 5.5 };
+
+export async function fetchAgentBudgets(): Promise<Record<string, AgentBudget>> {
+  const sb = getSupabase();
+  if (!sb) return {};
+  const { data } = await sb.from('clinics').select('id,metadata');
+  const out: Record<string, AgentBudget> = {};
+  (data || []).forEach((c: any) => { out[c.id] = { ...DEFAULT_AGENT_BUDGET, ...(c.metadata?.agent_budget || {}) }; });
+  return out;
+}
+
+export async function saveAgentBudget(clinicId: string, budget: AgentBudget): Promise<boolean> {
+  const sb = getSupabase();
+  if (!sb || !isUuid(clinicId)) return false;
+  const { data } = await sb.from('clinics').select('metadata').eq('id', clinicId).maybeSingle();
+  const { error } = await sb.from('clinics').update({ metadata: { ...(data?.metadata || {}), agent_budget: budget } }).eq('id', clinicId);
+  if (error) console.error('Erro ao salvar orçamento do agente:', error.message);
+  return !error;
+}
