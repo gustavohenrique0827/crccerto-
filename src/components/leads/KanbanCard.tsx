@@ -99,16 +99,12 @@ export default function KanbanCard({
     >
       <motion.div 
         style={(() => {
-          // O card inteiro leva a cor da etapa: fundo, contorno, sombra e faixa lateral
+          // Só o contorno leva a cor da etapa (nas quatro bordas, com um brilho suave); o fundo não muda
           const sc = stageColor(lead.status);
-          return {
-            ...(isSelected ? {} : {
-              background: `color-mix(in srgb, ${sc} 14%, var(--color-surface-elevated))`,
-              borderColor: `color-mix(in srgb, ${sc} 45%, transparent)`,
-              boxShadow: `0 1px 10px color-mix(in srgb, ${sc} 28%, transparent)`
-            }),
-            borderLeftColor: sc,
-            borderLeftWidth: 4
+          return isSelected ? undefined : {
+            borderColor: sc,
+            borderWidth: 2,
+            boxShadow: `0 0 0 1px color-mix(in srgb, ${sc} 25%, transparent), 0 2px 10px color-mix(in srgb, ${sc} 35%, transparent)`
           };
         })()}
         onClick={() => { if (!isDragging) onOpenDetail(lead); }}
