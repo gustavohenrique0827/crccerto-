@@ -28,6 +28,7 @@ import {
 import { cn } from '../../lib/utils';
 import DashboardFilters from './DashboardFilters';
 import DayTaskResolverModal, { TaskCategoryType } from './DayTaskResolverModal';
+import ClinicorpStatusChip from './ClinicorpStatusChip';
 import TaskReminders from './TaskReminders';
 import ChannelConversionChart from '../analytics/ChannelConversionChart';
 import { useApp } from '../../context/AppContext';
@@ -140,6 +141,7 @@ export default function DashboardMain({ selectedClinicId }: DashboardMainProps) 
                 <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] animate-pulse" />
                 <span>Em Tempo Real</span>
               </Badge>
+              <ClinicorpStatusChip clinicId={selectedClinicId} />
             </div>
             <p className="text-xs text-[var(--color-text-muted)] mt-1 font-medium">
               Acompanhamento integrado de leads, agendamentos, confirmações e taxa de conversão comercial.

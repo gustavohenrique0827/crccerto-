@@ -23,6 +23,9 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/src/lib/utils';
 import { useApp } from '@/src/context/AppContext';
+import { fetchAppointmentsFromDb, fetchLeadsFromDb, getSupabase, statusBucket } from '@/src/lib/supabase';
+import { leadDisplayName } from '@/src/lib/leadName';
+import { LeadStatus } from '@/src/types';
 
 export type TaskCategoryType = 
   | 'today_pending'
@@ -66,109 +69,69 @@ const INITIAL_TASK_DATA: Record<TaskCategoryType, DayTaskItem[]> = {
   general_followups: []
 };
 
-function loadTaskDataFromStorage(): Record<TaskCategoryType, DayTaskItem[]> {
-  const result: Record<TaskCategoryType, DayTaskItem[]> = {
-    today_pending: [],
-    today_confirmed: [],
-    tomorrow_pending: [],
-    tomorrow_confirmed: [],
-    yesterday_attended: [],
-    yesterday_missed: [],
-    yesterday_closed: [],
-    general_leads: [],
-    general_appointments: [],
-    general_confirmations: [],
-    general_followups: []
-  };
+const emptyTaskData = (): Record<TaskCategoryType, DayTaskItem[]> => ({
+  today_pending: [], today_confirmed: [], tomorrow_pending: [], tomorrow_confirmed: [],
+  yesterday_attended: [], yesterday_missed: [], yesterday_closed: [],
+  general_leads: [], general_appointments: [], general_confirmations: [], general_followups: []
+});
 
-  const now = new Date();
+/** Listas do dashboard a partir da agenda do Clinicorp (banco) e dos leads: as mesmas que alimentam os números dos cards. */
+async function loadTaskData(clinicId?: string): Promise<Record<TaskCategoryType, DayTaskItem[]>> {
+  const result = emptyTaskData();
   const pad = (n: number) => String(n).padStart(2, '0');
-  const formatDate = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const dayOf = (offset: number) => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+  const today = dayOf(0), tomorrow = dayOf(1), yesterday = dayOf(-1);
 
-  const todayStr = formatDate(now);
-  const tom = new Date(now);
-  tom.setDate(tom.getDate() + 1);
-  const tomorrowStr = formatDate(tom);
-  const yest = new Date(now);
-  yest.setDate(yest.getDate() - 1);
-  const yesterdayStr = formatDate(yest);
+  const [apts, leads] = await Promise.all([fetchAppointmentsFromDb(clinicId), fetchLeadsFromDb(clinicId)]);
 
-  try {
-    const rawApts = localStorage.getItem('crm_appointments_data');
-    if (rawApts) {
-      const appointments: any[] = JSON.parse(rawApts);
-      appointments.forEach((apt: any) => {
-        const item: DayTaskItem = {
-          id: apt.id,
-          patientName: apt.patient || apt.patientName || 'Paciente',
-          phone: apt.phone || '',
-          procedure: apt.procedure || 'Consulta Odontológica',
-          time: apt.time || '09:00',
-          date: apt.date || todayStr,
-          doctor: apt.professional || 'Dentista Responsável',
-          clinic: apt.clinicName || 'Unidade Principal',
-          status: apt.status === 'confirmed' ? 'confirmed' : apt.status === 'completed' ? 'attended' : apt.status === 'no_show' ? 'missed' : 'pending',
-          value: apt.price || apt.value || 250,
-          origin: apt.source || 'Agenda',
-          notes: apt.notes
-        };
-
-        if (apt.date === todayStr) {
-          if (apt.status === 'confirmed') {
-            result.today_confirmed.push(item);
-          } else if (apt.status === 'pending' || apt.status === 'scheduled') {
-            result.today_pending.push(item);
-          }
-        } else if (apt.date === tomorrowStr) {
-          if (apt.status === 'confirmed') {
-            result.tomorrow_confirmed.push(item);
-          } else if (apt.status === 'pending' || apt.status === 'scheduled') {
-            result.tomorrow_pending.push(item);
-          }
-        } else if (apt.date === yesterdayStr) {
-          if (apt.status === 'completed' || apt.status === 'attended') {
-            result.yesterday_attended.push(item);
-          } else if (apt.status === 'no_show' || apt.status === 'missed') {
-            result.yesterday_missed.push(item);
-          }
-        }
-
-        result.general_appointments.push(item);
-        if (apt.status === 'confirmed') {
-          result.general_confirmations.push(item);
-        }
-      });
+  (apts || []).filter((a: any) => a.kind !== 'blocked' && statusBucket(a.status) !== 'cancelled').forEach((a: any) => {
+    const bucket = statusBucket(a.status);
+    const item: DayTaskItem = {
+      id: a.id,
+      patientName: a.patient || 'Paciente',
+      phone: a.phone || '',
+      procedure: a.category || a.procedure || 'Consulta',
+      time: a.time || '',
+      date: a.date,
+      doctor: a.professional || '',
+      clinic: a.clinicName || '',
+      status: bucket === 'attended' ? 'attended' : bucket === 'missed' ? 'missed' : bucket === 'confirmed' ? 'confirmed' : 'pending',
+      value: a.price || undefined,
+      origin: 'Clinicorp',
+      notes: a.notes
+    };
+    if (a.date === today) {
+      if (bucket === 'confirmed') result.today_confirmed.push(item);
+      else if (bucket === 'pending') result.today_pending.push(item);
+    } else if (a.date === tomorrow) {
+      if (bucket === 'confirmed') result.tomorrow_confirmed.push(item);
+      else if (bucket === 'pending') result.tomorrow_pending.push(item);
+    } else if (a.date === yesterday) {
+      if (bucket === 'attended') result.yesterday_attended.push(item);
+      else if (bucket === 'missed') result.yesterday_missed.push(item);
     }
+    if (a.date >= today) result.general_appointments.push(item);
+    if (bucket === 'confirmed' && a.date >= today) result.general_confirmations.push(item);
+  });
+  Object.values(result).forEach(list => list.sort((x, y) => `${x.date} ${x.time}`.localeCompare(`${y.date} ${y.time}`)));
 
-    const rawLeads = localStorage.getItem('crm_leads_data');
-    if (rawLeads) {
-      const leads: any[] = JSON.parse(rawLeads);
-      leads.forEach((l: any) => {
-        const item: DayTaskItem = {
-          id: l.id,
-          patientName: l.name || 'Lead',
-          phone: l.phone || '',
-          procedure: l.procedureInterest || l.procedure || 'Avaliação Inicial',
-          time: 'Comercial',
-          date: l.createdAt ? formatDate(new Date(l.createdAt)) : todayStr,
-          doctor: l.assignedTo || 'Equipe Comercial',
-          clinic: l.clinicName || 'Unidade Principal',
-          status: 'pending',
-          value: l.estimatedValue || 0,
-          origin: l.source || 'Marketing Digital',
-          notes: l.notes
-        };
-
-        result.general_leads.push(item);
-        if (l.status === 'contacted' || l.status === 'negotiation') {
-          result.general_followups.push(item);
-        }
-      });
-    }
-  } catch (err) {
-    console.error('Error loading tasks from storage:', err);
-  }
-
+  (leads || []).slice(0, 300).forEach((l: any) => {
+    const item: DayTaskItem = {
+      id: l.id,
+      patientName: leadDisplayName(l),
+      phone: l.whatsapp || l.phone || '',
+      procedure: l.procedureType || 'Avaliação',
+      time: 'Comercial',
+      date: l.createdAt ? String(l.createdAt).slice(0, 10) : today,
+      doctor: l.responsibleName || 'Equipe Comercial',
+      clinic: '',
+      status: 'pending',
+      value: l.estimatedValue || 0,
+      origin: l.sourceId || 'WhatsApp'
+    };
+    result.general_leads.push(item);
+    if (l.status === LeadStatus.SECOND_CONTACT || l.status === LeadStatus.THIRD_CONTACT) result.general_followups.push(item);
+  });
   return result;
 }
 
@@ -201,7 +164,9 @@ export default function DayTaskResolverModal({
 }: DayTaskResolverModalProps) {
   const { addToast, setActiveTab, openMessaging } = useApp();
   const [activeCategory, setActiveCategory] = useState<TaskCategoryType>(initialCategory);
-  const [taskData, setTaskData] = useState<Record<TaskCategoryType, DayTaskItem[]>>(() => loadTaskDataFromStorage());
+  const { currentClinicId } = useApp();
+  const [taskData, setTaskData] = useState<Record<TaskCategoryType, DayTaskItem[]>>(emptyTaskData);
+  const [loadingTasks, setLoadingTasks] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClinicFilter, setSelectedClinicFilter] = useState('all');
 
@@ -210,9 +175,10 @@ export default function DayTaskResolverModal({
     if (isOpen) {
       setActiveCategory(initialCategory);
       setSearchTerm('');
-      setTaskData(loadTaskDataFromStorage());
+      setLoadingTasks(true);
+      loadTaskData(currentClinicId).then(d => { setTaskData(d); setLoadingTasks(false); });
     }
-  }, [isOpen, initialCategory]);
+  }, [isOpen, initialCategory, currentClinicId]);
 
   // Keyboard shortcut: ESC to close
   useEffect(() => {
@@ -250,18 +216,9 @@ export default function DayTaskResolverModal({
       return updated;
     });
 
-    // Persist to crm_appointments_data
-    try {
-      const raw = localStorage.getItem('crm_appointments_data');
-      if (raw) {
-        const apts = JSON.parse(raw);
-        const updatedApts = apts.map((a: any) => a.id === item.id ? { ...a, status: 'confirmed' } : a);
-        localStorage.setItem('crm_appointments_data', JSON.stringify(updatedApts));
-        window.dispatchEvent(new Event('crm_appointments_updated'));
-      }
-    } catch (e) {
-      console.error('Erro ao atualizar agendamento no localStorage:', e);
-    }
+    // Grava no banco para os números do dashboard acompanharem. O Clinicorp segue como fonte da verdade:
+    // a próxima sincronização traz o status de lá, então confirme também no Clinicorp.
+    getSupabase()?.from('appointments').update({ status: 'confirmed' }).eq('id', item.id).then(() => window.dispatchEvent(new Event('crm_leads_updated')));
 
     addToast(`Presença confirmada para ${item.patientName}!`, 'success');
   };
