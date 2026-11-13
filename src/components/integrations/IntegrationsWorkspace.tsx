@@ -114,7 +114,7 @@ export default function IntegrationsWorkspace() {
         action: { label: 'Configurar e sincronizar', onClick: () => setView('clinicorp') }
       },
       {
-        id: 'whatsapp', name: 'WhatsApp (agente n8n + WAHA)', group: 'Mensageria',
+        id: 'whatsapp', name: 'WhatsApp (agente n8n + WAHA)', group: 'Chat',
         description: 'O agente atende os contatos no WhatsApp e grava cada conversa e lead no sistema.',
         tone: wa.length === 0 ? 'off' : waActive ? 'ok' : 'warn',
         badge: wa.length === 0 ? 'Sem sessão cadastrada' : waActive ? 'Ativo' : 'Sessão pausada',
@@ -124,10 +124,10 @@ export default function IntegrationsWorkspace() {
           ...(lastMsgAt ? [`Última mensagem: ${fmtDateTime(lastMsgAt)}`] : [])
         ],
         icon: <MessageCircle size={22} />, accent: 'bg-emerald-500',
-        action: { label: 'Abrir Mensageria', onClick: () => setActiveTab('mensageria') }
+        action: { label: 'Abrir Chat', onClick: () => setActiveTab('mensageria') }
       },
       {
-        id: 'agent-usage', name: 'Consumo do agente (estimado)', group: 'Mensageria',
+        id: 'agent-usage', name: 'Consumo do agente (estimado)', group: 'Chat',
         description: 'Quanto o agente de WhatsApp consome por clínica no mês, com limite e aviso quando chegar perto.',
         tone: 'off', badge: 'Estimativa',
         facts: ['Calculado pelas mensagens gravadas; o valor exato fica na OpenAI'],

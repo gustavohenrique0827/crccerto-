@@ -1325,7 +1325,7 @@ export function useSupabaseDashboardStats(clinicId?: string, range?: string) {
 }
 
 // ---------------------------------------------------------------------
-// Mensageria (conversas de WhatsApp registradas pelo agente n8n/WAHA)
+// Chat (conversas de WhatsApp registradas pelo agente n8n/WAHA)
 // ---------------------------------------------------------------------
 
 export interface ConversationRow {
@@ -1334,6 +1334,8 @@ export interface ConversationRow {
   type: 'mensagem_cliente' | 'mensagem_responsavel' | 'nota' | 'mudanca_etapa';
   message: string;
   createdAt: string;
+  /** Arquivo da mensagem (só nas conversas lidas ao vivo do WhatsApp) */
+  media?: { type: string; name: string; session: string; chatId: string; messageId: string };
 }
 
 /** Todas as mensagens, notas e mudanças de etapa (a RLS limita ao que o usuário pode ver). */
@@ -1420,7 +1422,7 @@ export async function fetchOperationalAlerts(): Promise<OperationalAlert[]> {
     out.push({
       id: 'unanswered',
       title: `${waiting.length} ${waiting.length === 1 ? 'conversa aguardando' : 'conversas aguardando'} resposta`,
-      desc: `A mais antiga espera há ${hours >= 1 ? `${hours} h` : 'menos de 1 h'}. Abra a Mensageria para responder.`,
+      desc: `A mais antiga espera há ${hours >= 1 ? `${hours} h` : 'menos de 1 h'}. Abra o Chat para responder.`,
       type: 'alert', at: oldest.at, tab: 'mensageria'
     });
   }

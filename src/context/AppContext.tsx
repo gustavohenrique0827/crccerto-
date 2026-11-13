@@ -60,7 +60,7 @@ interface AppContextType {
   navigationHistory: string[];
   goBack: () => void;
 
-  // Botões de WhatsApp levam para a Mensageria, já na conversa do contato
+  // Botões de WhatsApp levam para o Chat, já na conversa do contato
   messagingTarget: MessagingTarget | null;
   openMessaging: (target: MessagingTarget) => void;
   clearMessagingTarget: () => void;

@@ -1,5 +1,5 @@
 /**
- * Mensageria ao vivo: lê as conversas direto do WAHA, na hora, sem depender do n8n nem do banco.
+ * Chat ao vivo: lê as conversas direto do WAHA, na hora, sem depender do n8n nem do banco.
  * A chave do WAHA fica só no servidor.
  *
  * Variáveis de ambiente (Vercel, sem prefixo VITE_):
@@ -10,12 +10,13 @@
  * POST /api/whatsapp/live  { action: 'chats' | 'messages', clinicId, ... }
  *   chats:    { clinicId }                          -> últimas conversas de todas as sessões da clínica
  *   messages: { clinicId, leadId? | phone?, chatId?, session? }  -> mensagens da conversa (até 300 por sessão)
+ *   media:    { clinicId, session, chatId, messageId }  -> o arquivo (áudio, imagem, vídeo, documento) em binário
  * Authorization: Bearer <token da sessão do Supabase>. O acesso à clínica é conferido aqui.
  */
 import { createClient } from '@supabase/supabase-js';
 
 interface Req { method?: string; headers: Record<string, string | string[] | undefined>; body?: any }
-interface Res { status: (c: number) => Res; json: (b: unknown) => void }
+interface Res { status: (c: number) => Res; json: (b: unknown) => void; setHeader: (k: string, v: string) => void; send: (b: any) => void }
 
 const env = (k: string) => (process.env[k] || '').trim();
 const fail = (res: Res, code: number, message: string) => res.status(code).json({ ok: false, message });
@@ -118,6 +119,26 @@ export default async function handler(req: Req, res: Res) {
       return res.status(200).json({ ok: true, source: reachable ? 'waha' : 'none', reason: reachable ? undefined : 'O WAHA não respondeu.', chats });
     }
 
+    if (body.action === 'media') {
+      const session = String(body.session || '');
+      const chatId = String(body.chatId || '');
+      const messageId = String(body.messageId || '');
+      if (!sessions.includes(session)) return fail(res, 403, 'Sessão não pertence a esta clínica.');
+      if (!chatId || !messageId) return fail(res, 400, 'Informe a conversa e a mensagem.');
+      const full = await waha(`/api/${encodeURIComponent(session)}/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}?downloadMedia=true`, 25000);
+      const murl: string | undefined = full?.media?.url;
+      if (!murl) return fail(res, 404, 'Não foi possível baixar este arquivo do WhatsApp.');
+      // O WAHA devolve o endereço interno (localhost): trocamos pelo público e mantemos só o caminho do arquivo
+      const path = new URL(murl, 'http://x').pathname;
+      const r = await fetch(`${env('WAHA_URL').replace(/\/$/, '')}${path}`, { headers: { 'X-Api-Key': env('WAHA_API_KEY') } });
+      if (!r.ok) return fail(res, 404, 'O arquivo não está mais disponível.');
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length > 4_300_000) return fail(res, 413, 'Arquivo grande demais para abrir aqui (mais de 4 MB). Abra no celular.');
+      res.setHeader('Content-Type', String(full.media.mimetype || r.headers.get('content-type') || 'application/octet-stream').split(';')[0]);
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      return res.status(200).send(buf);
+    }
+
     if (body.action === 'messages') {
       let chatIds: string[] = [];
       let useSessions = sessions;
@@ -141,7 +162,7 @@ export default async function handler(req: Req, res: Res) {
       const results = await Promise.all(jobs);
       const reachable = results.some(r => Array.isArray(r.rows));
       const seen = new Map<string, any>();
-      for (const { s, rows } of results) {
+      for (const { s, c, rows } of results) {
         for (const m of rows || []) {
           const id = String(m.id?._serialized || m.id || '');
           if (!id || seen.has(id)) continue;
@@ -149,6 +170,10 @@ export default async function handler(req: Req, res: Res) {
             id, session: s, fromMe: !!m.fromMe,
             text: (m.body || '').toString() || (m.hasMedia ? mediaLabel(m) : ''),
             hasMedia: !!m.hasMedia,
+            caption: (m.body || '').toString(),
+            mediaType: String(m.media?.mimetype || ''),
+            mediaName: m.media?.filename || '',
+            chatId: c,
             at: new Date(Number(m.timestamp) * 1000).toISOString()
           });
         }

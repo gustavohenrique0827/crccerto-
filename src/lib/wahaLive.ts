@@ -10,7 +10,7 @@ export interface LiveChat {
   status: string | null;
   last: { body: string; at: string | null; fromMe: boolean };
 }
-export interface LiveMessage { id: string; session: string; fromMe: boolean; text: string; hasMedia: boolean; at: string }
+export interface LiveMessage { id: string; session: string; chatId: string; fromMe: boolean; text: string; caption: string; hasMedia: boolean; mediaType: string; mediaName: string; at: string }
 
 interface LiveResult<T> { ok: boolean; source: 'waha' | 'none'; reason?: string; data: T }
 
@@ -39,3 +39,25 @@ export const fetchLiveChats = (clinicId: string) =>
 
 export const fetchLiveMessages = (clinicId: string, target: { leadId?: string; phone?: string; chatId?: string; session?: string }) =>
   call<LiveMessage[]>({ action: 'messages', clinicId, ...target }, j => (j.messages || []) as LiveMessage[], []);
+
+/** Baixa o arquivo (áudio, imagem, vídeo, documento) de uma mensagem. Devolve o Blob ou o motivo do erro. */
+export async function fetchLiveMedia(clinicId: string, m: { session: string; chatId: string; messageId: string }): Promise<{ blob?: Blob; error?: string }> {
+  const sb = getSupabase();
+  const { data } = (await sb?.auth.getSession()) || { data: { session: null } };
+  const token = data.session?.access_token;
+  if (!token) return { error: 'Sem sessão.' };
+  try {
+    const res = await fetch('/api/whatsapp/live', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ action: 'media', clinicId, ...m })
+    });
+    if (!res.ok || (res.headers.get('content-type') || '').includes('application/json')) {
+      const j = await res.json().catch(() => null);
+      return { error: j?.message || `O servidor respondeu ${res.status}.` };
+    }
+    return { blob: await res.blob() };
+  } catch (e: any) {
+    return { error: e?.message || 'Sem conexão com o servidor.' };
+  }
+}

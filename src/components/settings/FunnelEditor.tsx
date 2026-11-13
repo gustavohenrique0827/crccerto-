@@ -55,7 +55,7 @@ export default function FunnelEditor() {
         </h4>
         <button onClick={reset} className="flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] cursor-pointer"><RotateCcw size={12} />Restaurar padrão</button>
       </div>
-      <p className="text-xs text-[var(--color-text-muted)]">Mude o nome e a cor de cada etapa. Vale para o funil, a ficha do lead e a Mensageria desta clínica. As etapas continuam as mesmas por dentro (n8n e sincronização não mudam).</p>
+      <p className="text-xs text-[var(--color-text-muted)]">Mude o nome e a cor de cada etapa. Vale para o funil, a ficha do lead e o Chat desta clínica. As etapas continuam as mesmas por dentro (n8n e sincronização não mudam).</p>
       <div className="space-y-2">
         {DEFAULT_STAGES.map(s => {
           const o = (draft as any)[s.id] || {};

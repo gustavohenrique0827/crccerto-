@@ -50,7 +50,7 @@ export function buildSuggestions(appointments: any[]): Suggestion[] {
     return [...byPatient.values()].sort((x, y) => (x.kind === 'confirm' ? 0 : 1) - (y.kind === 'confirm' ? 0 : 1) || x.date.localeCompare(y.date));
 }
 
-/** Telefone e texto pronto da sugestão: quem usa abre a conversa na Mensageria com a mensagem no campo. */
+/** Telefone e texto pronto da sugestão: quem usa abre a conversa no Chat com a mensagem no campo. */
 export const suggestionMessage = (s: Suggestion): { phone: string; name: string; draft: string } | undefined => {
   if (!phoneDigits(s.phone)) return undefined;
   const draft = s.kind === 'confirm'

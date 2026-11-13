@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Download, FileText as FileIcon, Loader2, Play,
   ArrowLeft, CheckCheck, ExternalLink, FileText, Inbox, MessageCircle, NotebookPen, RefreshCw, Search, Send, StickyNote, Zap
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
@@ -7,7 +8,7 @@ import { cn } from '../../lib/utils';
 import { Lead, LeadStatus } from '../../types';
 import { leadDisplayName } from '../../lib/leadName';
 import { stageLabel, useFunnel } from '../../lib/funnelConfig';
-import { LiveChat, LiveMessage, fetchLiveChats, fetchLiveMessages } from '../../lib/wahaLive';
+import { LiveChat, LiveMessage, fetchLiveChats, fetchLiveMedia, fetchLiveMessages } from '../../lib/wahaLive';
 import LeadDetail from '../leads/LeadDetail';
 import {
   ConversationRow, addLeadNote, getSupabase, addOutgoingMessage, fetchConversationRows, formatPhoneBR, isSupabaseConfigured, localDay, phoneKey, useSupabaseLeads
@@ -59,6 +60,47 @@ const waLink = (phone: string, text?: string) => {
   const full = digits.length <= 11 ? `55${digits}` : digits;
   return `https://wa.me/${full}${text ? `?text=${encodeURIComponent(text)}` : ''}`;
 };
+
+const mediaCache = new Map<string, string>(); // id da mensagem -> endereço do arquivo já baixado
+
+/** Áudio, imagem, vídeo, figurinha e documento de uma mensagem do WhatsApp. Imagens abrem sozinhas; o resto, ao clicar. */
+function MediaView({ media, clinicId, mine }: { media: NonNullable<ConversationRow['media']>; clinicId: string; mine: boolean }) {
+  const kind = /image\/webp/i.test(media.type) ? 'sticker' : /^image/i.test(media.type) ? 'image' : /^audio/i.test(media.type) ? 'audio' : /^video/i.test(media.type) ? 'video' : 'file';
+  const [url, setUrl] = useState<string | null>(mediaCache.get(media.messageId) || null);
+  const [state, setState] = useState<'idle' | 'loading' | 'error'>('idle');
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    if (mediaCache.has(media.messageId)) { setUrl(mediaCache.get(media.messageId)!); return; }
+    setState('loading');
+    const r = await fetchLiveMedia(clinicId, { session: media.session, chatId: media.chatId, messageId: media.messageId });
+    if (r.blob) {
+      const u = URL.createObjectURL(r.blob);
+      mediaCache.set(media.messageId, u);
+      setUrl(u);
+      setState('idle');
+    } else {
+      setError(r.error || 'Não foi possível abrir.');
+      setState('error');
+    }
+  }, [clinicId, media]);
+
+  useEffect(() => { if ((kind === 'image' || kind === 'sticker') && !url && state === 'idle') load(); }, [kind, url, state, load]);
+
+  const label = kind === 'audio' ? 'Áudio' : kind === 'video' ? 'Vídeo' : kind === 'image' ? 'Imagem' : kind === 'sticker' ? 'Figurinha' : (media.name || 'Documento');
+  if (url) {
+    if (kind === 'image' || kind === 'sticker') return <a href={url} target="_blank" rel="noreferrer"><img src={url} alt={label} className="rounded-xl max-h-72 max-w-full mb-1" /></a>;
+    if (kind === 'audio') return <audio controls src={url} className="max-w-full mb-1" />;
+    if (kind === 'video') return <video controls src={url} className="rounded-xl max-h-72 max-w-full mb-1" />;
+    return <a href={url} download={media.name || 'arquivo'} className="flex items-center gap-2 underline mb-1"><Download size={14} />{label}</a>;
+  }
+  return (
+    <button onClick={load} disabled={state === 'loading'} className={cn('flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold mb-1 cursor-pointer', mine ? 'bg-blue-500/60 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-100')}>
+      {state === 'loading' ? <Loader2 size={14} className="animate-spin" /> : kind === 'file' ? <FileIcon size={14} /> : <Play size={14} />}
+      {state === 'loading' ? 'Baixando…' : state === 'error' ? `${error} Tentar de novo` : kind === 'audio' ? 'Ouvir áudio' : kind === 'video' ? 'Ver vídeo' : `Abrir ${label}`}
+    </button>
+  );
+}
 
 export default function MessagingWorkspace() {
   const { currentClinicId, currentClinic, clinics, user, addToast, messagingTarget, clearMessagingTarget } = useApp();
@@ -226,7 +268,7 @@ export default function MessagingWorkspace() {
     if (!selected) return [];
     const internal = selected.rows.filter(r => r.type === 'nota' || r.type === 'mudanca_etapa');
     if (liveMsgs && liveMsgs.length > 0) {
-      const live: ConversationRow[] = liveMsgs.map(m => ({ id: m.id, leadId: selected.lead.id, type: m.fromMe ? 'mensagem_responsavel' : 'mensagem_cliente', message: m.text, createdAt: m.at }));
+      const live: ConversationRow[] = liveMsgs.map(m => ({ id: m.id, leadId: selected.lead.id, type: m.fromMe ? 'mensagem_responsavel' : 'mensagem_cliente', message: m.hasMedia ? m.caption : m.text, createdAt: m.at, ...(m.hasMedia ? { media: { type: m.mediaType, name: m.mediaName, session: m.session, chatId: m.chatId, messageId: m.id } } : {}) }));
       return [...live, ...internal].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     }
     return [...selected.rows].reverse();
@@ -273,7 +315,7 @@ export default function MessagingWorkspace() {
     <div className="h-full flex flex-col gap-3" style={{ minHeight: 520 }}>
       <div className="shrink-0 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-black tracking-tight text-[var(--color-text-primary)]">Mensageria</h1>
+          <h1 className="text-2xl font-black tracking-tight text-[var(--color-text-primary)]">Chat</h1>
           <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Conversas de WhatsApp do agente e da equipe, organizadas por contato.</p>
         </div>
         <span className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold', liveState.ok || live ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400')} title={live ? 'Novas mensagens aparecem na hora' : 'Atualizando a cada 10 segundos'}>
@@ -373,7 +415,8 @@ export default function MessagingWorkspace() {
                       ) : (
                         <div className={cn('flex', m.type === 'mensagem_responsavel' ? 'justify-end' : 'justify-start')}>
                           <div className={cn('max-w-[78%] rounded-2xl px-3.5 py-2 text-[13px] shadow-sm', m.type === 'mensagem_responsavel' ? 'bg-blue-600 text-white rounded-br-md' : 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 rounded-bl-md border border-slate-200 dark:border-slate-700')}>
-                            <span className="whitespace-pre-wrap break-words">{m.message || '(mensagem sem texto)'}</span>
+                            {m.media && <MediaView media={m.media} clinicId={liveClinicId} mine={m.type === 'mensagem_responsavel'} />}
+                            {(m.message || !m.media) && <span className="whitespace-pre-wrap break-words">{m.message || '(mensagem sem texto)'}</span>}
                             <span className={cn('block text-right text-[10px] mt-0.5', m.type === 'mensagem_responsavel' ? 'text-blue-100' : 'text-slate-400')}>{hhmm(m.createdAt)}</span>
                           </div>
                         </div>
