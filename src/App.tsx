@@ -41,6 +41,7 @@ import TaskModal from './components/dashboard/TaskModal';
 import NewLeadModal from './components/leads/NewLeadModal';
 const NewClinicModal = lazy(() => import('./components/clinics/NewClinicModal'));
 const ClinicHealthDrawer = lazy(() => import('./components/clinics/ClinicHealthDrawer'));
+import UpdateBanner from './components/common/UpdateBanner';
 import ToastContainer from './components/layout/ToastContainer';
 import LoginPage from './LoginPage';
 import LogoutConfirmationModal from './components/auth/LogoutConfirmationModal';
@@ -449,6 +450,7 @@ export default function App() {
 
       {/* Global Modals & Toast */}
       <ToastContainer />
+      <UpdateBanner />
 
       <TaskModal
         isOpen={isTaskModalOpen}

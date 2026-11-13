@@ -3,9 +3,23 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
 
+// Identifica o build: a Vercel dá o commit; fora dela usamos a hora do build.
+const buildId = process.env.VERCEL_GIT_COMMIT_SHA || String(Date.now());
+
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    define: { __APP_VERSION__: JSON.stringify(buildId) },
+    plugins: [
+      react(),
+      tailwindcss(),
+      {
+        // version.json fica ao lado do site: o app compara com a versão que está rodando e avisa quando muda
+        name: 'emit-version',
+        generateBundle() {
+          (this as any).emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ version: buildId }) });
+        }
+      }
+    ],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
