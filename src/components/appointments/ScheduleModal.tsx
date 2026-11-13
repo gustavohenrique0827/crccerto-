@@ -28,6 +28,8 @@ interface ScheduleModalProps {
   initialDate?: string;
   initialTime?: string;
   onAddAppointment?: (appointment: any) => void | boolean | Promise<boolean | void>;
+  /** Edição: abre o formulário preenchido com este agendamento; o salvamento devolve `editOf` com o id original */
+  editing?: { id: string; patient: string; phone?: string; date: string; time: string; duration: number; procedure?: string; professional?: string; notes?: string; clinicId?: string } | null;
   clinicId?: string;
   clinicName?: string;
 }
@@ -54,6 +56,7 @@ export default function ScheduleModal({
   initialDate, 
   initialTime, 
   onAddAppointment,
+  editing,
   clinicId: propClinicId,
   clinicName: propClinicName
 }: ScheduleModalProps) {
@@ -90,6 +93,21 @@ export default function ScheduleModal({
     if (initialDate) setDate(initialDate);
     if (initialTime) setTime(initialTime);
   }, [initialDate, initialTime]);
+
+  // Edição: preenche o formulário com o agendamento escolhido
+  useEffect(() => {
+    if (!editing) return;
+    setPatient(editing.patient || '');
+    setPhone(editing.phone || '');
+    setDate(editing.date);
+    setTime(editing.time);
+    setDuration(String(editing.duration || 45));
+    setProcedure(editing.procedure || 'Consulta Avaliação');
+    setNotes(editing.notes || '');
+    if (editing.professional) setProfessional(editing.professional);
+    if (editing.clinicId) setClinicId(editing.clinicId);
+    setSyncWithGoogle(false);
+  }, [editing?.id]);
 
   useEffect(() => {
     if (teamMembers.length > 0 && !teamMembers.includes(professional)) {
@@ -165,7 +183,8 @@ export default function ScheduleModal({
     const clinicName = resolvedClinic ? resolvedClinic.name : (propClinicName || 'Unidade Principal');
 
     const newApt = {
-      id: isSupabaseConfigured() ? newUuid() : 'apt_' + Date.now().toString(36),
+      id: editing ? editing.id : (isSupabaseConfigured() ? newUuid() : 'apt_' + Date.now().toString(36)),
+      ...(editing ? { editOf: editing.id } : {}),
       leadId: leadIdRef.current,
       patient: patient.trim(),
       phone: phone.trim(),
@@ -229,7 +248,7 @@ export default function ScheduleModal({
         addToast(`Agendamento salvo. (Aviso Google Calendar: ${err.message || 'Verifique login'})`, 'info');
       }
     } else {
-      addToast(`Agendamento de "${patient}" confirmado para ${date} às ${time}!`, 'success');
+      addToast(editing ? `Agendamento de "${patient}" atualizado para ${date} às ${time}.` : `Agendamento de "${patient}" confirmado para ${date} às ${time}!`, 'success');
     }
 
     setIsSubmitting(false);
@@ -263,7 +282,7 @@ export default function ScheduleModal({
                 <CalendarCheck size={20} />
               </div>
               <div>
-                <h2 className="text-lg font-black text-slate-900 dark:text-white tracking-tight">Novo Agendamento</h2>
+                <h2 className="text-lg font-black text-slate-900 dark:text-white tracking-tight">{editing ? 'Editar Agendamento' : 'Novo Agendamento'}</h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                   Reserve a consulta na agenda e sincronize com o Google Calendar.
                 </p>
@@ -513,7 +532,7 @@ export default function ScheduleModal({
                 className="px-6 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white transition-all shadow-md shadow-blue-500/20 flex items-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 <Check size={16} />
-                <span>{isSubmitting ? 'Salvando...' : 'Confirmar Agendamento'}</span>
+                <span>{isSubmitting ? 'Salvando...' : editing ? 'Salvar alterações' : 'Confirmar Agendamento'}</span>
               </button>
             </div>
           </form>
