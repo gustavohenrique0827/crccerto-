@@ -7,6 +7,7 @@ import { cn } from '../../lib/utils';
 import { Lead, LeadStatus } from '../../types';
 import { leadDisplayName } from '../../lib/leadName';
 import { stageLabel, useFunnel } from '../../lib/funnelConfig';
+import { LiveChat, LiveMessage, fetchLiveChats, fetchLiveMessages } from '../../lib/wahaLive';
 import LeadDetail from '../leads/LeadDetail';
 import {
   ConversationRow, addLeadNote, getSupabase, addOutgoingMessage, fetchConversationRows, formatPhoneBR, isSupabaseConfigured, localDay, phoneKey, useSupabaseLeads
@@ -17,6 +18,7 @@ const STAGE_LABEL = new Proxy({} as Record<string, string>, { get: (_t, k) => st
 type Filter = 'all' | 'unanswered' | 'waiting';
 
 interface Thread {
+  chat?: LiveChat; // conversa lida ao vivo do WhatsApp (WAHA)
   lead: Lead;
   rows: ConversationRow[]; // mais recente primeiro
   last: ConversationRow; // última mensagem (cliente ou equipe)
@@ -59,7 +61,7 @@ const waLink = (phone: string, text?: string) => {
 };
 
 export default function MessagingWorkspace() {
-  const { currentClinicId, currentClinic, user, addToast, messagingTarget, clearMessagingTarget } = useApp();
+  const { currentClinicId, currentClinic, clinics, user, addToast, messagingTarget, clearMessagingTarget } = useApp();
   useFunnel();
   const { leads, loading: leadsLoading } = useSupabaseLeads(currentClinicId);
   const [rows, setRows] = useState<ConversationRow[]>([]);
@@ -114,6 +116,24 @@ export default function MessagingWorkspace() {
   );
   const staleHours = lastMessageAt ? (Date.now() - new Date(lastMessageAt).getTime()) / 3600000 : null;
 
+  // Conversas lidas direto do WAHA (como no SPY): não dependem do n8n nem do banco
+  const liveClinicId = currentClinic?.id || (currentClinicId && currentClinicId !== 'all' ? currentClinicId : '') || clinics[0]?.id || '';
+  const [liveChats, setLiveChats] = useState<LiveChat[]>([]);
+  const [liveState, setLiveState] = useState<{ ok: boolean; reason?: string }>({ ok: false });
+  useEffect(() => {
+    if (!liveClinicId) return;
+    let cancelled = false;
+    const run = async () => {
+      const r = await fetchLiveChats(liveClinicId);
+      if (cancelled) return;
+      setLiveState({ ok: r.ok && r.source === 'waha', reason: r.reason });
+      if (r.ok && r.source === 'waha') setLiveChats(r.data);
+    };
+    run();
+    const t = setInterval(run, 8000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [liveClinicId]);
+
   const threads = useMemo<Thread[]>(() => {
     const byLead = new Map<string, ConversationRow[]>();
     rows.forEach(r => { const a = byLead.get(r.leadId); if (a) a.push(r); else byLead.set(r.leadId, [r]); });
@@ -125,12 +145,28 @@ export default function MessagingWorkspace() {
       if (!last) return;
       out.push({ lead, rows: list, last, fromClient: last.type === 'mensagem_cliente' });
     });
+    // Conversas ao vivo do WAHA: valem mais que o banco para a última mensagem e trazem contatos que nunca viraram lead
+    liveChats.forEach(c => {
+      const at = c.last.at || new Date(0).toISOString();
+      const lastRow: ConversationRow = { id: `live:${c.chatId}`, leadId: c.leadId || '', type: c.last.fromMe ? 'mensagem_responsavel' : 'mensagem_cliente', message: c.last.body, createdAt: at };
+      const idx = c.leadId ? out.findIndex(t => t.lead.id === c.leadId) : out.findIndex(t => phoneKey(t.lead.whatsapp) === phoneKey(c.phone) && !!phoneKey(c.phone));
+      if (idx >= 0) {
+        if (at >= out[idx].last.createdAt) out[idx] = { ...out[idx], chat: c, last: lastRow, fromClient: !c.last.fromMe };
+        else out[idx] = { ...out[idx], chat: c };
+        return;
+      }
+      const lead = (c.leadId ? leads.find(l => l.id === c.leadId) : undefined) || ({
+        id: c.leadId || `tel:${phoneKey(c.phone) || c.chatId}`, name: c.leadName || c.name || '', phone: c.phone, whatsapp: c.phone, email: '',
+        clinicId: liveClinicId, sourceId: 'whatsapp', status: (c.status as LeadStatus) || LeadStatus.NEW, lastInteractionAt: at
+      } as unknown as Lead);
+      out.push({ lead, chat: c, rows: [], last: lastRow, fromClient: !c.last.fromMe });
+    });
     if (starter && !out.some(t => t.lead.id === starter.id)) {
       const now = new Date().toISOString();
       out.push({ lead: starter, rows: [], last: { id: 'new', leadId: starter.id, type: 'mensagem_responsavel', message: 'Nova conversa', createdAt: now }, fromClient: false });
     }
     return out.sort((a, b) => b.last.createdAt.localeCompare(a.last.createdAt));
-  }, [rows, leads, starter]);
+  }, [rows, leads, starter, liveChats, liveClinicId]);
 
   // Botão de WhatsApp em outra tela: abre a conversa do contato (e já deixa a mensagem no campo)
   useEffect(() => {
@@ -167,7 +203,34 @@ export default function MessagingWorkspace() {
   }, [threads, filter, search]);
 
   const selected = threads.find(t => t.lead.id === selectedId) || null;
-  const messages = useMemo(() => (selected ? [...selected.rows].reverse() : []), [selected]);
+  const [liveMsgs, setLiveMsgs] = useState<LiveMessage[] | null>(null);
+  const selectedKey = selected ? `${selected.lead.id}|${selected.chat?.chatId || ''}` : '';
+  useEffect(() => {
+    setLiveMsgs(null);
+    if (!selected || !liveClinicId) return;
+    let cancelled = false;
+    const isUuid = /^[0-9a-f-]{36}$/i.test(selected.lead.id);
+    const run = async () => {
+      const r = await fetchLiveMessages(liveClinicId, selected.chat
+        ? { chatId: selected.chat.chatId, session: selected.chat.session }
+        : { leadId: isUuid ? selected.lead.id : undefined, phone: selected.lead.whatsapp || selected.lead.phone });
+      if (!cancelled && r.ok && r.source === 'waha') setLiveMsgs(r.data);
+    };
+    run();
+    const t = setInterval(run, 5000);
+    return () => { cancelled = true; clearInterval(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedKey, liveClinicId]);
+
+  const messages = useMemo<ConversationRow[]>(() => {
+    if (!selected) return [];
+    const internal = selected.rows.filter(r => r.type === 'nota' || r.type === 'mudanca_etapa');
+    if (liveMsgs && liveMsgs.length > 0) {
+      const live: ConversationRow[] = liveMsgs.map(m => ({ id: m.id, leadId: selected.lead.id, type: m.fromMe ? 'mensagem_responsavel' : 'mensagem_cliente', message: m.text, createdAt: m.at }));
+      return [...live, ...internal].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    }
+    return [...selected.rows].reverse();
+  }, [selected, liveMsgs]);
   useEffect(() => { threadEndRef.current?.scrollIntoView({ block: 'end' }); }, [selectedId, messages.length]);
 
   const fill = (text: string) => text
@@ -213,18 +276,18 @@ export default function MessagingWorkspace() {
           <h1 className="text-2xl font-black tracking-tight text-[var(--color-text-primary)]">Mensageria</h1>
           <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Conversas de WhatsApp do agente e da equipe, organizadas por contato.</p>
         </div>
-        <span className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold', live ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400')} title={live ? 'Novas mensagens aparecem na hora' : 'Atualizando a cada 10 segundos'}>
-          <span className={cn('w-2 h-2 rounded-full', live ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400')} />{live ? 'Ao vivo' : 'Atualiza a cada 10 s'}
+        <span className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold', liveState.ok || live ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400')} title={live ? 'Novas mensagens aparecem na hora' : 'Atualizando a cada 10 segundos'}>
+          <span className={cn('w-2 h-2 rounded-full', liveState.ok || live ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400')} />{liveState.ok ? 'WhatsApp ao vivo' : live ? 'Ao vivo (banco)' : 'Atualiza a cada 10 s'}
         </span>
         <button onClick={() => load()} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer">
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Atualizar
         </button>
       </div>
 
-      {staleHours !== null && staleHours > 6 && (
+      {!liveState.ok && staleHours !== null && staleHours > 6 && (
         <div className="shrink-0 flex items-start gap-2 px-4 py-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-xs text-amber-800 dark:text-amber-200">
           <span className="font-bold shrink-0">Sem mensagens novas.</span>
-          <span>A última mensagem registrada é de {new Date(lastMessageAt!).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} ({staleHours >= 48 ? `${Math.floor(staleHours / 24)} dias` : `${Math.floor(staleHours)} h`} atrás). O sistema mostra tudo o que está no banco, então o agente do WhatsApp (n8n/WAHA) parou de gravar: confira se a sessão do WAHA está conectada e se o fluxo do n8n está ativo.</span>
+          <span>A última mensagem registrada é de {new Date(lastMessageAt!).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} ({staleHours >= 48 ? `${Math.floor(staleHours / 24)} dias` : `${Math.floor(staleHours)} h`} atrás). O sistema está mostrando só o que o agente gravou no banco{liveState.reason ? ` (leitura direta do WhatsApp indisponível: ${liveState.reason})` : ''}. Configure WAHA_URL e WAHA_API_KEY na Vercel para ler as conversas direto do WhatsApp.</span>
         </div>
       )}
 
