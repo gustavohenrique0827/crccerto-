@@ -1425,6 +1425,18 @@ export async function fetchOperationalAlerts(): Promise<OperationalAlert[]> {
     });
   }
 
+  // 1b) O agente do WhatsApp parou de gravar mensagens
+  const { data: newest } = await sb.from('lead_interactions').select('created_at').in('interaction_type', ['mensagem_cliente', 'mensagem_responsavel']).order('created_at', { ascending: false }).limit(1);
+  const newestAt = newest?.[0]?.created_at as string | undefined;
+  if (newestAt && now - new Date(newestAt).getTime() > 12 * 3600000) {
+    out.push({
+      id: 'agent-silent',
+      title: 'Agente do WhatsApp sem registrar mensagens',
+      desc: `A última mensagem gravada é de ${new Date(newestAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}. Confira a sessão do WAHA e o fluxo do n8n.`,
+      type: 'alert', at: newestAt, tab: 'mensageria'
+    });
+  }
+
   // 2) Sincronização do Clinicorp antiga
   const { data: last } = await sb.from('appointments').select('updated_at').not('clinicorp_id', 'is', null).order('updated_at', { ascending: false }).limit(1);
   const lastSync = last?.[0]?.updated_at as string | undefined;

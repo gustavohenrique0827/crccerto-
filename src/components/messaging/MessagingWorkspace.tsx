@@ -7,7 +7,7 @@ import { cn } from '../../lib/utils';
 import { Lead, LeadStatus } from '../../types';
 import LeadDetail from '../leads/LeadDetail';
 import {
-  ConversationRow, addLeadNote, addOutgoingMessage, fetchConversationRows, formatPhoneBR, isSupabaseConfigured, localDay, useSupabaseLeads
+  ConversationRow, addLeadNote, getSupabase, addOutgoingMessage, fetchConversationRows, formatPhoneBR, isSupabaseConfigured, localDay, useSupabaseLeads
 } from '../../lib/supabase';
 
 const STAGE_LABEL: Record<string, string> = {
@@ -96,7 +96,30 @@ export default function MessagingWorkspace() {
     if (data) setRows(data);
     setLoading(false);
   }, []);
-  useEffect(() => { load(); const t = setInterval(() => load(true), 30000); return () => clearInterval(t); }, [load]);
+  // Tempo real: cada mensagem nova gravada pelo agente aparece na hora (canal do Supabase).
+  // O recarregamento a cada 10 s garante que nada se perca se o canal cair.
+  const [live, setLive] = useState(false);
+  useEffect(() => {
+    load();
+    const t = setInterval(() => load(true), 10000);
+    const sb = getSupabase();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const channel = sb
+      ?.channel('mensageria-lead-interactions')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lead_interactions' }, () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => load(true), 400); // agrupa rajadas de mensagens
+      })
+      .subscribe(status => setLive(status === 'SUBSCRIBED'));
+    return () => { clearInterval(t); if (timer) clearTimeout(timer); if (sb && channel) sb.removeChannel(channel); };
+  }, [load]);
+
+  // Última mensagem recebida: se o agente parou de gravar, isso aparece aqui
+  const lastMessageAt = useMemo(
+    () => rows.find(r => r.type === 'mensagem_cliente' || r.type === 'mensagem_responsavel')?.createdAt || null,
+    [rows]
+  );
+  const staleHours = lastMessageAt ? (Date.now() - new Date(lastMessageAt).getTime()) / 3600000 : null;
 
   const threads = useMemo<Thread[]>(() => {
     const byLead = new Map<string, ConversationRow[]>();
@@ -175,10 +198,20 @@ export default function MessagingWorkspace() {
           <h1 className="text-2xl font-black tracking-tight text-[var(--color-text-primary)]">Mensageria</h1>
           <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Conversas de WhatsApp do agente e da equipe, organizadas por contato.</p>
         </div>
+        <span className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold', live ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400')} title={live ? 'Novas mensagens aparecem na hora' : 'Atualizando a cada 10 segundos'}>
+          <span className={cn('w-2 h-2 rounded-full', live ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400')} />{live ? 'Ao vivo' : 'Atualiza a cada 10 s'}
+        </span>
         <button onClick={() => load()} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer">
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Atualizar
         </button>
       </div>
+
+      {staleHours !== null && staleHours > 6 && (
+        <div className="shrink-0 flex items-start gap-2 px-4 py-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-xs text-amber-800 dark:text-amber-200">
+          <span className="font-bold shrink-0">Sem mensagens novas.</span>
+          <span>A última mensagem registrada é de {new Date(lastMessageAt!).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} ({staleHours >= 48 ? `${Math.floor(staleHours / 24)} dias` : `${Math.floor(staleHours)} h`} atrás). O sistema mostra tudo o que está no banco, então o agente do WhatsApp (n8n/WAHA) parou de gravar: confira se a sessão do WAHA está conectada e se o fluxo do n8n está ativo.</span>
+        </div>
+      )}
 
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[360px_1fr] rounded-2xl overflow-hidden bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
         {/* Lista de conversas */}
