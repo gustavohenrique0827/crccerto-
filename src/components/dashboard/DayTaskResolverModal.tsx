@@ -25,6 +25,7 @@ import { cn } from '@/src/lib/utils';
 import { useApp } from '@/src/context/AppContext';
 import { fetchAppointmentsFromDb, fetchLeadsFromDb, getSupabase, statusBucket } from '@/src/lib/supabase';
 import { leadDisplayName } from '@/src/lib/leadName';
+import { confirmClinicorpAppointment } from '@/src/lib/clinicorpSync';
 import { LeadStatus } from '@/src/types';
 
 export type TaskCategoryType = 
@@ -162,7 +163,7 @@ export default function DayTaskResolverModal({
   initialCategory,
   onOpenLeadDetail
 }: DayTaskResolverModalProps) {
-  const { addToast, setActiveTab, openMessaging } = useApp();
+  const { addToast, setActiveTab, openMessaging, clinics } = useApp();
   const [activeCategory, setActiveCategory] = useState<TaskCategoryType>(initialCategory);
   const { currentClinicId } = useApp();
   const [taskData, setTaskData] = useState<Record<TaskCategoryType, DayTaskItem[]>>(emptyTaskData);
@@ -216,11 +217,14 @@ export default function DayTaskResolverModal({
       return updated;
     });
 
-    // Grava no banco para os números do dashboard acompanharem. O Clinicorp segue como fonte da verdade:
-    // a próxima sincronização traz o status de lá, então confirme também no Clinicorp.
-    getSupabase()?.from('appointments').update({ status: 'confirmed' }).eq('id', item.id).then(() => window.dispatchEvent(new Event('crm_leads_updated')));
-
-    addToast(`Presença confirmada para ${item.patientName}!`, 'success');
+    // Confirma no Clinicorp (fonte da verdade); o banco acompanha. Se o Clinicorp recusar, desfaz a mudança na tela.
+    const cid = currentClinicId && currentClinicId !== 'all' ? currentClinicId : clinics[0]?.id;
+    if (cid) {
+      confirmClinicorpAppointment(cid, item.id).then(r => {
+        if (r.ok) { addToast(`Presença de ${item.patientName} confirmada no Clinicorp.`, 'success'); window.dispatchEvent(new Event('crm_leads_updated')); }
+        else { addToast(r.message || 'O Clinicorp recusou a confirmação.', 'error'); loadTaskData(currentClinicId).then(setTaskData); }
+      });
+    }
   };
 
   const handleWhatsAppAction = (item: DayTaskItem) => {
