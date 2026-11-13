@@ -35,8 +35,7 @@ import { cn } from '@/src/lib/utils';
 const ALL_STAGES: { id: LeadStatus; label: string }[] = [
   { id: LeadStatus.NEW, label: 'Novo lead' },
   { id: LeadStatus.FIRST_CONTACT, label: '1° contato' },
-  { id: LeadStatus.SECOND_CONTACT, label: '2° contato' },
-  { id: LeadStatus.THIRD_CONTACT, label: '3° contato' },
+  { id: LeadStatus.SECOND_CONTACT, label: 'Follow-up' },
   { id: LeadStatus.INTERACTED, label: 'Interagiu' },
   { id: LeadStatus.APPOINTMENT, label: 'Agendado' },
   { id: LeadStatus.ATTENDED, label: 'Compareceu' },
@@ -61,7 +60,6 @@ const DEFAULT_STAGE_GOALS: Record<LeadStatus, StageGoal> = {
   [LeadStatus.NEW]: { targetCount: 10, targetValue: 30000 },
   [LeadStatus.FIRST_CONTACT]: { targetCount: 8, targetValue: 25000 },
   [LeadStatus.SECOND_CONTACT]: { targetCount: 6, targetValue: 20000 },
-  [LeadStatus.THIRD_CONTACT]: { targetCount: 5, targetValue: 15000 },
   [LeadStatus.INTERACTED]: { targetCount: 6, targetValue: 20000 },
   [LeadStatus.APPOINTMENT]: { targetCount: 5, targetValue: 35000 },
   [LeadStatus.ATTENDED]: { targetCount: 4, targetValue: 25000 },

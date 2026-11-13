@@ -199,7 +199,7 @@ export default function DayTaskResolverModal({
   initialCategory,
   onOpenLeadDetail
 }: DayTaskResolverModalProps) {
-  const { addToast, setActiveTab } = useApp();
+  const { addToast, setActiveTab, openMessaging } = useApp();
   const [activeCategory, setActiveCategory] = useState<TaskCategoryType>(initialCategory);
   const [taskData, setTaskData] = useState<Record<TaskCategoryType, DayTaskItem[]>>(() => loadTaskDataFromStorage());
   const [searchTerm, setSearchTerm] = useState('');
@@ -278,13 +278,7 @@ export default function DayTaskResolverModal({
       msg = `Olá ${item.patientName}, tudo bem? Segue o acompanhamento do seu plano de tratamento na ${item.clinic}.`;
     }
 
-    navigator.clipboard?.writeText(msg);
-    addToast(`Mensagem WhatsApp copiada para ${item.patientName}! Abrindo WhatsApp...`, 'info');
-    
-    // Clean phone number
-    const cleanPhone = item.phone.replace(/\D/g, '');
-    const fullPhone = cleanPhone.length <= 11 ? `55${cleanPhone}` : cleanPhone;
-    window.open(`https://wa.me/${fullPhone}?text=${encodeURIComponent(msg)}`, '_blank');
+    openMessaging({ phone: item.phone, name: item.patientName, draft: msg });
   };
 
   const handleReschedule = (item: DayTaskItem) => {

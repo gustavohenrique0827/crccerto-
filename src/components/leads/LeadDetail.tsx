@@ -56,7 +56,7 @@ const SOURCE_OPTIONS = ['Meta Ads', 'Google Ads', 'Instagram', 'Facebook', 'What
 const EDITABLE_FIELDS = ['name', 'whatsapp', 'phone', 'email', 'birthDate', 'cpf', 'cep', 'address', 'procedureType', 'sourceId', 'estimatedValue'] as const;
 
 export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDetailProps) {
-  const { addToast, currentClinic, clinics, setActiveTab: navigateTo, user } = useApp();
+  const { addToast, currentClinic, clinics, setActiveTab: navigateTo, user, openMessaging } = useApp();
 
   // Alterações salvas na ficha valem imediatamente, mesmo antes de o pai recarregar o lead
   const [overrides, setOverrides] = useState<Partial<Lead>>({});
@@ -1182,7 +1182,8 @@ export default function LeadDetail({ isOpen, onClose, lead: leadProp }: LeadDeta
                   <button 
                     onClick={() => {
                       if (quickActionModal.type === 'whatsapp') {
-                        window.open(`https://wa.me/${lead?.whatsapp?.replace(/\D/g, '')}?text=${encodeURIComponent(quickActionModal.content)}`, '_blank');
+                        openMessaging({ leadId: lead?.id, phone: lead?.whatsapp || lead?.phone, name: lead?.name, draft: quickActionModal.content });
+                        onClose();
                       } else if (quickActionModal.type === 'email') {
                         window.open(`mailto:${lead?.email}?subject=${encodeURIComponent(quickActionModal.subject || '')}&body=${encodeURIComponent(quickActionModal.content)}`, '_blank');
                       } else {

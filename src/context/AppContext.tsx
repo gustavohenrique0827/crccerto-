@@ -59,7 +59,14 @@ interface AppContextType {
   subPageData: any;
   navigationHistory: string[];
   goBack: () => void;
+
+  // Botões de WhatsApp levam para a Mensageria, já na conversa do contato
+  messagingTarget: MessagingTarget | null;
+  openMessaging: (target: MessagingTarget) => void;
+  clearMessagingTarget: () => void;
 }
+
+export interface MessagingTarget { leadId?: string; phone?: string; name?: string; draft?: string }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
@@ -539,6 +546,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
   }, [subPage]);
 
+  const [messagingTarget, setMessagingTarget] = useState<MessagingTarget | null>(null);
+  const openMessaging = useCallback((target: MessagingTarget) => {
+    setMessagingTarget(target);
+    setActiveTab('mensageria');
+  }, [setActiveTab]);
+  const clearMessagingTarget = useCallback(() => setMessagingTarget(null), []);
+
   const setSubPage = useCallback((page: string | null, data?: any) => {
     setSubPageState(page);
     if (data) setSubPageData(data);
@@ -574,6 +588,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       supabase: getSupabase(),
       leads, refreshLeads, addLead,
       user, login, logout, clinics, addClinic, updateClinic, deleteClinic, switchUserRole,
+      messagingTarget, openMessaging, clearMessagingTarget,
       currentClinicId, setCurrentClinicId, currentClinic, isAllClinicsView, isClientOnlyMode,
       hasPermission,
       isLogoutModalOpen, setIsLogoutModalOpen, confirmLogout,

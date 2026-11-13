@@ -74,7 +74,7 @@ const STATUS_FROM_DB: Record<string, LeadStatus> = {
   contatado: LeadStatus.FIRST_CONTACT,
   '1_contato': LeadStatus.FIRST_CONTACT,
   '2_contato': LeadStatus.SECOND_CONTACT,
-  '3_contato': LeadStatus.THIRD_CONTACT,
+  '3_contato': LeadStatus.SECOND_CONTACT, // 2º e 3º contato viraram a etapa Follow-up
   interagiu: LeadStatus.INTERACTED,
   agendou: LeadStatus.APPOINTMENT,
   agendamento: LeadStatus.APPOINTMENT,

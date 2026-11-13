@@ -1,12 +1,14 @@
 import React, { useMemo, useState } from 'react';
 import { BellRing, ChevronDown, MessageCircle } from 'lucide-react';
-import { buildSuggestions, KIND, suggestionWhatsApp } from '../followups/ClinicorpSuggestions';
+import { buildSuggestions, KIND, suggestionMessage } from '../followups/ClinicorpSuggestions';
+import { useApp } from '../../context/AppContext';
 import { cn } from '../../lib/utils';
 
 const br = (ymd: string) => ymd.split('-').reverse().slice(0, 2).join('/');
 
 /** Alertas de retorno da agenda (faltas, cancelamentos e consultas sem confirmação), na lateral da Agenda. */
 export default function ReturnAlerts({ appointments }: { appointments: any[] }) {
+  const { openMessaging } = useApp();
   const [open, setOpen] = useState(true);
   const items = useMemo(() => buildSuggestions(appointments), [appointments]);
 
@@ -27,7 +29,7 @@ export default function ReturnAlerts({ appointments }: { appointments: any[] }) 
         ) : (
           <ul className="mt-3 space-y-2 max-h-72 overflow-y-auto custom-scrollbar pr-0.5">
             {items.slice(0, 20).map(s => {
-              const K = KIND[s.kind]; const link = suggestionWhatsApp(s);
+              const K = KIND[s.kind]; const link = suggestionMessage(s);
               return (
                 <li key={s.key} className="flex items-start gap-2">
                   <span className={cn('mt-0.5 shrink-0 px-1.5 py-0.5 rounded-md border text-[9px] font-black uppercase tracking-wide', K.tone)}>{K.label.split(' ')[0]}</span>
@@ -36,9 +38,9 @@ export default function ReturnAlerts({ appointments }: { appointments: any[] }) 
                     <p className="text-[11px] text-slate-400 truncate">{br(s.date)} {s.time}{s.professional ? ` · ${s.professional.split(' ')[0]}` : ''}</p>
                   </div>
                   {link && (
-                    <a href={link} target="_blank" rel="noreferrer" title="Chamar no WhatsApp" className="shrink-0 p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 hover:bg-emerald-100">
+                    <button onClick={() => openMessaging(link)} title="Abrir conversa na Mensageria" className="shrink-0 p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 hover:bg-emerald-100 cursor-pointer">
                       <MessageCircle size={13} />
-                    </a>
+                    </button>
                   )}
                 </li>
               );

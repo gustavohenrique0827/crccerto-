@@ -50,8 +50,7 @@ import { Badge } from '../ui/Badge';
 const STAGES: { id: LeadStatus; label: string; color: string; bg: string }[] = [
   { id: LeadStatus.NEW, label: 'Novo lead', color: 'bg-[var(--stage-0)]', bg: 'bg-[var(--color-surface-sunken)]' },
   { id: LeadStatus.FIRST_CONTACT, label: '1° contato', color: 'bg-[var(--stage-1)]', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.SECOND_CONTACT, label: '2° contato', color: 'bg-[var(--stage-2)]', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.THIRD_CONTACT, label: '3° contato', color: 'bg-[var(--stage-3)]', bg: 'bg-[var(--color-surface-sunken)]' },
+  { id: LeadStatus.SECOND_CONTACT, label: 'Follow-up', color: 'bg-[var(--stage-2)]', bg: 'bg-[var(--color-surface-sunken)]' },
   { id: LeadStatus.INTERACTED, label: 'Interagiu', color: 'bg-[var(--stage-4)]', bg: 'bg-[var(--color-surface-sunken)]' },
   { id: LeadStatus.APPOINTMENT, label: 'Agendado', color: 'bg-[var(--stage-5)]', bg: 'bg-[var(--color-surface-sunken)]' },
   { id: LeadStatus.ATTENDED, label: 'Compareceu', color: 'bg-[var(--stage-6)]', bg: 'bg-[var(--color-surface-sunken)]' },
@@ -153,7 +152,6 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
     [LeadStatus.NEW]: { targetCount: 10, targetValue: 30000 },
     [LeadStatus.FIRST_CONTACT]: { targetCount: 8, targetValue: 25000 },
     [LeadStatus.SECOND_CONTACT]: { targetCount: 6, targetValue: 20000 },
-    [LeadStatus.THIRD_CONTACT]: { targetCount: 5, targetValue: 15000 },
     [LeadStatus.INTERACTED]: { targetCount: 6, targetValue: 20000 },
     [LeadStatus.APPOINTMENT]: { targetCount: 5, targetValue: 35000 },
     [LeadStatus.ATTENDED]: { targetCount: 4, targetValue: 25000 },

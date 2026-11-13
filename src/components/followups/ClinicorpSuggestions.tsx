@@ -49,19 +49,18 @@ export function buildSuggestions(appointments: any[]): Suggestion[] {
     return [...byPatient.values()].sort((x, y) => (x.kind === 'confirm' ? 0 : 1) - (y.kind === 'confirm' ? 0 : 1) || x.date.localeCompare(y.date));
 }
 
-export const suggestionWhatsApp = (s: Suggestion) => {
-  const d = phoneDigits(s.phone);
-  if (!d) return undefined;
-  const num = d.startsWith('55') ? d : `55${d}`;
-  const msg = s.kind === 'confirm'
+/** Telefone e texto pronto da sugestão: quem usa abre a conversa na Mensageria com a mensagem no campo. */
+export const suggestionMessage = (s: Suggestion): { phone: string; name: string; draft: string } | undefined => {
+  if (!phoneDigits(s.phone)) return undefined;
+  const draft = s.kind === 'confirm'
     ? `Olá ${s.patient.split(' ')[0]}, tudo bem? Passando para confirmar sua consulta em ${br(s.date)} às ${s.time}. Podemos confirmar?`
     : `Olá ${s.patient.split(' ')[0]}, tudo bem? Aqui é da clínica. Vamos encontrar um novo horário para a sua consulta?`;
-  return `https://wa.me/${num}?text=${encodeURIComponent(msg)}`;
+  return { phone: s.phone, name: s.patient, draft };
 };
 
 /** Fila de follow-up gerada sozinha a partir da agenda do Clinicorp. */
 export default function ClinicorpSuggestions() {
-  const { currentClinicId } = useApp();
+  const { currentClinicId, openMessaging } = useApp();
   const { appointments, loading } = useClinicDataset(currentClinicId);
   const [open, setOpen] = useState(true);
   const [filter, setFilter] = useState<'all' | Kind>('all');
@@ -72,7 +71,7 @@ export default function ClinicorpSuggestions() {
   const count = (k: Kind) => items.filter(i => i.kind === k).length;
   if (loading || items.length === 0) return null;
 
-  const wa = suggestionWhatsApp;
+  const wa = suggestionMessage;
 
   return (
     <section className="bg-[var(--color-surface-elevated)] rounded-[var(--radius-panel)] border border-[var(--color-border-default)] shadow-[var(--shadow-panel)] overflow-hidden">
@@ -102,7 +101,7 @@ export default function ClinicorpSuggestions() {
                     <p className="text-xs text-[var(--color-text-muted)] truncate">{s.reason} · {br(s.date)} {s.time}{s.professional ? ` · ${s.professional.split(' ')[0]}` : ''}</p>
                   </div>
                   {link ? (
-                    <a href={link} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shrink-0"><MessageCircle size={13} />WhatsApp</a>
+                    <button onClick={() => openMessaging(link)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shrink-0 cursor-pointer"><MessageCircle size={13} />Mensagem</button>
                   ) : <span className="text-[11px] text-[var(--color-text-faint)] shrink-0">sem telefone</span>}
                 </li>
               );

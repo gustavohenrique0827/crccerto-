@@ -1,3 +1,4 @@
+import { leadDisplayName } from '../../lib/leadName';
 import React, { useState } from 'react';
 import { 
   MoreHorizontal, 
@@ -35,8 +36,7 @@ interface KanbanCardProps {
 const STAGES: { id: LeadStatus; label: string }[] = [
   { id: LeadStatus.NEW, label: 'Novo lead' },
   { id: LeadStatus.FIRST_CONTACT, label: '1° contato' },
-  { id: LeadStatus.SECOND_CONTACT, label: '2° contato' },
-  { id: LeadStatus.THIRD_CONTACT, label: '3° contato' },
+  { id: LeadStatus.SECOND_CONTACT, label: 'Follow-up' },
   { id: LeadStatus.INTERACTED, label: 'Interagiu' },
   { id: LeadStatus.APPOINTMENT, label: 'Agendado' },
   { id: LeadStatus.ATTENDED, label: 'Compareceu' },
@@ -167,7 +167,7 @@ export default function KanbanCard({
               "font-bold text-[var(--color-text-primary)] group-hover/card:text-[var(--color-primary-blue)] transition-colors truncate",
               isCompact ? "text-[11px] leading-tight mt-0.5" : "text-xs mt-1"
             )}>
-              {lead.name}
+              {leadDisplayName(lead)}
             </h4>
           </div>
           
