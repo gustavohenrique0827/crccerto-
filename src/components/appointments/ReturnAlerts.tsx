@@ -38,7 +38,7 @@ export default function ReturnAlerts({ appointments }: { appointments: any[] }) 
                     <p className="text-[11px] text-slate-400 truncate">{br(s.date)} {s.time}{s.professional ? ` · ${s.professional.split(' ')[0]}` : ''}</p>
                   </div>
                   {link && (
-                    <button onClick={() => openMessaging(link)} title="Abrir conversa na Mensageria" className="shrink-0 p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 hover:bg-emerald-100 cursor-pointer">
+                    <button onClick={() => openMessaging(link)} title="Abrir conversa no Chat" className="shrink-0 p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 hover:bg-emerald-100 cursor-pointer">
                       <MessageCircle size={13} />
                     </button>
                   )}

@@ -81,7 +81,7 @@ export function MainSidebar({
       items: [
         { id: 'leads', label: 'Pipeline', icon: Target },
         { id: 'pacientes', label: 'Pacientes', icon: UserCircle },
-        { id: 'mensageria', label: 'Mensageria', icon: MessagesSquare },
+        { id: 'mensageria', label: 'Chat', icon: MessagesSquare },
         { id: 'followups', label: 'Follow-ups', icon: Activity }
       ]
     },

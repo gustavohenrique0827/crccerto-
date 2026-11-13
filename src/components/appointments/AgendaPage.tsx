@@ -488,7 +488,7 @@ export default function AgendaPage() {
                 )}
                 {digits && (
                   <button onClick={() => { setDetail(null); openMessaging({ phone: detail.phone, name: detail.patient }); }} className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold cursor-pointer">
-                    <MessageCircle size={16} /> Abrir conversa na Mensageria
+                    <MessageCircle size={16} /> Abrir conversa no Chat
                   </button>
                 )}
               </div>

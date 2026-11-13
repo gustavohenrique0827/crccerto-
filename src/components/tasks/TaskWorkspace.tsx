@@ -291,7 +291,7 @@ export default function TaskWorkspace() {
                             <button
                               onClick={(e) => { e.stopPropagation(); openMessaging({ leadId: task.leadId, name: task.patientName, phone: /Tel:\s*([\d+()\s-]{8,})/.exec(task.description || '')?.[1]?.trim() }); }}
                               className="normal-case tracking-normal flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 hover:bg-emerald-100 cursor-pointer"
-                              title="Abrir a conversa na Mensageria"
+                              title="Abrir a conversa no Chat"
                             ><MessageIcon size={11} />Mensagem</button>
                           </p>
                         )}
