@@ -8,6 +8,7 @@ import ScheduleModal from './ScheduleModal';
 import { detectAppointmentConflicts } from '../../lib/calendarConflicts';
 import { BOOKING_PROFESSIONAL } from '../../lib/bookingRule';
 import { cancelClinicorpAppointment, confirmClinicorpAppointment, createClinicorpAppointment, fetchClinicIntegrations } from '../../lib/clinicorpSync';
+import { getSupabase } from '../../lib/supabase';
 import { fetchAppointmentsFromDb, isSupabaseConfigured, saveAppointmentsToDb, statusBucket, formatPhoneBR } from '../../lib/supabase';
 
 type Apt = {
@@ -164,6 +165,7 @@ export default function AgendaPage() {
   const [statusFilter, setStatusFilter] = useState('Todos');
   const [detail, setDetail] = useState<Apt | null>(null);
   const [schedule, setSchedule] = useState<{ date?: string; time?: string } | null>(null);
+  const [editing, setEditing] = useState<Apt | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const todayStr = ymd(new Date());
 
@@ -236,6 +238,30 @@ export default function AgendaPage() {
 
   const handleAdd = async (apt: any): Promise<boolean> => {
     const withClinic = { ...apt, clinicId: apt.clinicId && apt.clinicId !== '1' ? apt.clinicId : clinicId };
+
+    // Edição: o Clinicorp não tem "editar", então criamos o novo horário e só depois cancelamos o antigo
+    if (apt.editOf) {
+      const original = apts.find(a => a.id === apt.editOf);
+      if (original && (original as any).clinicorp) {
+        const r = await createClinicorpAppointment(withClinic.clinicId, {
+          patient: withClinic.patient, phone: withClinic.phone || '', date: withClinic.date, time: withClinic.time,
+          duration: withClinic.duration || 30, professional: withClinic.professional || '', procedure: withClinic.procedure
+        });
+        if (!r.ok) { addToast(r.message || 'O Clinicorp recusou a alteração. O agendamento antigo foi mantido.', 'error'); return false; }
+        const c = await cancelClinicorpAppointment(withClinic.clinicId, original.id);
+        if (!c.ok) addToast(`O novo horário foi criado, mas não consegui cancelar o antigo (${c.message || 'erro'}). Cancele o antigo pelo botão Excluir.`, 'warning');
+        await load();
+        return true;
+      }
+      // criado só no CRM: atualiza o registro
+      const merged = { ...(original || {}), ...withClinic, id: apt.editOf, clinicId: original?.clinicId || withClinic.clinicId };
+      delete (merged as any).editOf;
+      setApts(prev => prev.map(a => (a.id === apt.editOf ? { ...a, ...merged } as Apt : a)));
+      const ok = isSupabaseConfigured() ? await saveAppointmentsToDb([merged as any]) : true;
+      addToast(ok ? 'Agendamento atualizado.' : 'Não foi possível salvar a alteração.', ok ? 'success' : 'error');
+      if (isSupabaseConfigured()) load();
+      return ok;
+    }
     // Clínica ligada ao Clinicorp: o agendamento nasce lá (fonte da verdade) e volta para cá pela sincronização
     const connected = (await fetchClinicIntegrations()).some(i => i.clinicId === withClinic.clinicId && i.hasKey);
     if (connected) {
@@ -264,11 +290,27 @@ export default function AgendaPage() {
   };
 
   const actOnClinicorp = async (kind: 'confirm' | 'cancel', apt: Apt) => {
-    if (kind === 'cancel' && !window.confirm(`Cancelar o agendamento de ${apt.patient} no Clinicorp?`)) return;
+    if (kind === 'cancel' && !window.confirm(`Excluir o agendamento de ${apt.patient}? No Clinicorp ele fica como cancelado.`)) return;
     const cid = apt.clinicId || clinicId || '';
     const r = kind === 'confirm' ? await confirmClinicorpAppointment(cid, apt.id) : await cancelClinicorpAppointment(cid, apt.id);
     addToast(r.ok ? (r.message || 'Feito.') : (r.message || 'O Clinicorp recusou.'), r.ok ? 'success' : 'error');
     if (r.ok) { setDetail(null); load(); }
+  };
+
+  /** Excluir: no Clinicorp o agendamento é cancelado (o sistema não apaga); criado só no CRM, é removido de verdade. */
+  const deleteApt = async (apt: Apt) => {
+    if ((apt as any).clinicorp) { await actOnClinicorp('cancel', apt); return; }
+    if (!window.confirm(`Excluir o agendamento de ${apt.patient}?`)) return;
+    const sb = getSupabase();
+    if (sb) {
+      const { error } = await sb.from('appointments').delete().eq('id', apt.id);
+      if (error) { addToast('Não foi possível excluir o agendamento.', 'error'); return; }
+    } else {
+      try { localStorage.setItem('crm_appointments_data', JSON.stringify(JSON.parse(localStorage.getItem('crm_appointments_data') || '[]').filter((a: any) => a.id !== apt.id))); } catch { /* */ }
+    }
+    setApts(prev => prev.filter(a => a.id !== apt.id));
+    setDetail(null);
+    addToast('Agendamento excluído.', 'success');
   };
 
   const openSlot = (d: Date, e: React.MouseEvent<HTMLElement>) => {
@@ -508,10 +550,11 @@ export default function AgendaPage() {
                     <AlertTriangle size={14} className="mt-0.5 shrink-0" />Conflito com: {(conf.conflictingWith || []).map(x => x.patient).join(', ')}
                   </p>
                 )}
-                {(detail as any).clinicorp && b !== 'cancelled' && (
-                  <div className="flex gap-2">
-                    {(b === 'pending') && <button onClick={() => actOnClinicorp('confirm', detail)} className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold cursor-pointer">Confirmar no Clinicorp</button>}
-                    <button onClick={() => actOnClinicorp('cancel', detail)} className="flex-1 py-2.5 rounded-xl border border-rose-300 dark:border-rose-900 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-sm font-bold cursor-pointer">Cancelar agendamento</button>
+                {b !== 'cancelled' && (
+                  <div className="flex flex-wrap gap-2">
+                    {(detail as any).clinicorp && b === 'pending' && <button onClick={() => actOnClinicorp('confirm', detail)} className="flex-1 min-w-[120px] py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold cursor-pointer">Confirmar no Clinicorp</button>}
+                    <button onClick={() => { setEditing(detail); setDetail(null); }} className="flex-1 min-w-[120px] py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 text-sm font-bold cursor-pointer">Editar</button>
+                    <button onClick={() => deleteApt(detail)} className="flex-1 min-w-[120px] py-2.5 rounded-xl border border-rose-300 dark:border-rose-900 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-sm font-bold cursor-pointer">Excluir</button>
                   </div>
                 )}
                 {digits && (
@@ -524,6 +567,17 @@ export default function AgendaPage() {
           </div>
         );
       })()}
+
+      {editing && (
+        <ScheduleModal
+          isOpen
+          editing={editing}
+          onClose={() => setEditing(null)}
+          onAddAppointment={handleAdd}
+          clinicId={editing.clinicId || clinicId || '1'}
+          clinicName={clinics.find(c => c.id === (editing.clinicId || clinicId))?.name || 'Clínica'}
+        />
+      )}
 
       {schedule && (
         <ScheduleModal
