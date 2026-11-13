@@ -98,15 +98,7 @@ export default function KanbanCard({
       className="relative"
     >
       <motion.div 
-        style={(() => {
-          // Só o contorno leva a cor da etapa (nas quatro bordas, com um brilho suave); o fundo não muda
-          const sc = stageColor(lead.status);
-          return isSelected ? undefined : {
-            borderColor: sc,
-            borderWidth: 2,
-            boxShadow: `0 0 0 1px color-mix(in srgb, ${sc} 25%, transparent), 0 2px 10px color-mix(in srgb, ${sc} 35%, transparent)`
-          };
-        })()}
+        style={{ borderLeftColor: stageColor(lead.status), borderLeftWidth: 3 }}
         onClick={() => { if (!isDragging) onOpenDetail(lead); }}
         className={cn(
           "bg-[var(--color-surface-elevated)] rounded-[var(--radius-control)] border transition-all cursor-pointer active:cursor-grabbing group/card relative shadow-[var(--shadow-control)]",
