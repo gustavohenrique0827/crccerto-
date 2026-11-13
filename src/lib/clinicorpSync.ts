@@ -72,3 +72,20 @@ export async function fetchClinicIntegrations(): Promise<ClinicIntegration[]> {
     lastSyncAt: r.last_sync_at, lastStatus: r.last_status, lastMessage: r.last_message
   }));
 }
+
+export interface ClinicorpWriteResult { ok: boolean; message?: string; clinicorpId?: string }
+
+/** Cria o paciente no Clinicorp (e no CRM). */
+export function createClinicorpPatient(clinicId: string, p: { name: string; phone: string; email?: string; birthDate?: string; notes?: string; ignoreSameName?: boolean }) {
+  return callServer({ action: 'create_patient', clinicId, ...p }) as Promise<ClinicorpWriteResult>;
+}
+/** Cria o agendamento no Clinicorp; o CRM recebe o registro pela sincronização logo em seguida. */
+export function createClinicorpAppointment(clinicId: string, a: { patient: string; phone: string; email?: string; date: string; time: string; duration: number; professional: string; procedure?: string; ignoreSameName?: boolean }) {
+  return callServer({ action: 'create_appointment', clinicId, ...a }) as Promise<ClinicorpWriteResult>;
+}
+export function confirmClinicorpAppointment(clinicId: string, appointmentId: string) {
+  return callServer({ action: 'confirm_appointment', clinicId, appointmentId }) as Promise<ClinicorpWriteResult>;
+}
+export function cancelClinicorpAppointment(clinicId: string, appointmentId: string) {
+  return callServer({ action: 'cancel_appointment', clinicId, appointmentId }) as Promise<ClinicorpWriteResult>;
+}

@@ -12,6 +12,10 @@
  *   sync:       { clinicId, daysBack?: 30, daysForward?: 60, dryRun?: boolean }
  *   connect:    { clinicId, subscriberId, apiKey }   (testa a chave no Clinicorp e salva)
  *   disconnect: { clinicId }
+ *   create_patient:      { clinicId, name, phone, email?, birthDate?, notes?, ignoreSameName? }
+ *   create_appointment:  { clinicId, patient, phone, email?, date, time, duration, professional, procedure?, ignoreSameName? }
+ *   confirm_appointment: { clinicId, appointmentId }   (id do agendamento no CRM)
+ *   cancel_appointment:  { clinicId, appointmentId }
  * GET  /api/clinicorp/sync  (agendador) sincroniza todas as clínicas com sincronização automática ligada.
  * Authorization: Bearer <token da sessão do Supabase de um admin com acesso à clínica> ou <CRON_SECRET>
  */
@@ -38,6 +42,46 @@ async function clinicorpGet(creds: Creds, path: string, params: Record<string, s
 }
 
 // Data no fuso de Brasília (toISOString usa UTC e depois das 21h já seria o dia seguinte)
+async function clinicorpPost(creds: Creds, path: string, body: Record<string, unknown>) {
+  const r = await fetch(`${CLINICORP_BASE}/${path}`, {
+    method: 'POST',
+    headers: { Authorization: 'Basic ' + Buffer.from(`${creds.subscriberId}:${creds.apiKey}`).toString('base64'), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subscriber_id: creds.subscriberId, ...body })
+  });
+  const text = await r.text();
+  let json: any = null;
+  try { json = JSON.parse(text); } catch { /* resposta sem JSON */ }
+  if (!r.ok) throw new Error(json?.message || json?.error || (typeof json === 'string' ? json : '') || `O Clinicorp recusou (${r.status}).`);
+  return json ?? {};
+}
+
+const digitsOf = (v: unknown) => String(v || '').replace(/\D/g, '');
+const phoneKey8 = (v: unknown) => { const d = digitsOf(v); return d.length >= 8 ? d.slice(-8) : ''; };
+const pickId = (o: any): string => {
+  if (o == null) return '';
+  if (typeof o === 'number' || typeof o === 'string') return String(o);
+  for (const k of ['id', 'PersonId', 'Patient_PersonId', 'patient_id', 'patientId']) if (o[k]) return String(o[k]);
+  for (const v of Object.values(o)) if (v && typeof v === 'object') { const x = pickId(v); if (x) return x; }
+  return '';
+};
+
+/** Cria o paciente no Clinicorp e registra no banco do CRM. Devolve o id do Clinicorp. */
+async function createPatientInClinicorp(sb: any, creds: Creds, clinicId: string, p: { name: string; phone: string; email?: string; birthDate?: string; notes?: string; ignoreSameName?: boolean }): Promise<string> {
+  const d = digitsOf(p.phone);
+  const res = await clinicorpPost(creds, 'patient/create', {
+    Name: p.name,
+    ...(d ? { MobilePhone: Number(d.length > 11 ? d.slice(-11) : d) } : {}),
+    ...(p.email ? { Email: p.email } : {}),
+    ...(p.birthDate ? { BirthDate: p.birthDate } : {}),
+    ...(p.notes ? { Notes: p.notes } : {}),
+    ...(p.ignoreSameName ? { IgnoreSameName: 'X' } : {})
+  });
+  const id = pickId(res);
+  if (!id) throw new Error('O Clinicorp criou o paciente, mas não devolveu o identificador. Sincronize e confira na agenda.');
+  await sb.from('patients').upsert({ clinic_id: clinicId, clinicorp_id: id, name: p.name, phone: p.phone || '', email: p.email || null }, { onConflict: 'clinic_id,clinicorp_id' });
+  return id;
+}
+
 const ymd = (d: Date) => d.toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
 const addDays = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return d; };
 
@@ -372,6 +416,89 @@ export default async function handler(req: Req, res: Res) {
       const { error } = await sb.from('clinic_integrations').update({ auto_sync: body.autoSync !== false, updated_at: new Date().toISOString() }).eq('clinic_id', clinicId).eq('provider', 'clinicorp');
       if (error) throw new Error(error.message);
       return res.status(200).json({ ok: true });
+    }
+
+    const writeActions = ['create_patient', 'create_appointment', 'confirm_appointment', 'cancel_appointment'];
+    if (writeActions.includes(action)) {
+      const wcreds = await loadCreds(sb, clinicId);
+      if (!wcreds) return fail(res, 400, 'Esta clínica ainda não tem credenciais do Clinicorp. Conecte primeiro.');
+
+      if (action === 'create_patient') {
+        const name = String(body.name || '').trim();
+        if (!name) return fail(res, 400, 'Informe o nome do paciente.');
+        const id = await createPatientInClinicorp(sb, wcreds, clinicId, { name, phone: String(body.phone || ''), email: body.email, birthDate: body.birthDate, notes: body.notes, ignoreSameName: body.ignoreSameName === true });
+        return res.status(200).json({ ok: true, clinicorpId: id, message: 'Paciente criado no Clinicorp.' });
+      }
+
+      if (action === 'create_appointment') {
+        const patientName = String(body.patient || '').trim();
+        const date = String(body.date || '');
+        const time = String(body.time || '');
+        if (!patientName || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) return fail(res, 400, 'Informe paciente, data e horário.');
+        const dur = Math.max(15, Number(body.duration) || 30);
+        const [h, m] = time.split(':').map(Number);
+        const endMin = h * 60 + m + dur;
+        const toTime = `${String(Math.floor(endMin / 60) % 24).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
+
+        // profissional: precisa existir no Clinicorp (tabela professionals vem da sincronização)
+        const profName = String(body.professional || '').trim();
+        const { data: pros } = await sb.from('professionals').select('name,clinicorp_id').eq('clinic_id', clinicId).not('clinicorp_id', 'is', null);
+        const norm = (v: string) => v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+        const pro = (pros || []).find((x: any) => norm(x.name) === norm(profName)) || (pros || []).find((x: any) => profName && norm(x.name).includes(norm(profName).split(' ')[0]));
+        if (!pro) return fail(res, 400, 'Escolha o profissional da lista (ele precisa existir no Clinicorp). Sincronize se o profissional é novo.');
+
+        // paciente: o mesmo telefone na base do Clinicorp, senão cria
+        let patientId = '';
+        const key = phoneKey8(body.phone);
+        if (key) {
+          const { data: pats } = await sb.from('patients').select('clinicorp_id,phone').eq('clinic_id', clinicId).not('clinicorp_id', 'is', null);
+          patientId = (pats || []).find((x: any) => phoneKey8(x.phone) === key)?.clinicorp_id || '';
+        }
+        if (!patientId) patientId = await createPatientInClinicorp(sb, wcreds, clinicId, { name: patientName, phone: String(body.phone || ''), email: body.email, ignoreSameName: body.ignoreSameName === true });
+
+        // id da clínica no Clinicorp: vem dos agendamentos existentes
+        const t = (offset: number) => ymd(addDays(offset));
+        const sample = await clinicorpGet(wcreds, 'appointment/list', { from: t(-30), to: t(30) });
+        const businessId = (sample as any[]).find(a => a.Clinic_BusinessId)?.Clinic_BusinessId;
+        if (!businessId) return fail(res, 400, 'Não consegui descobrir o código da clínica no Clinicorp (não há agendamentos recentes para consultar).');
+
+        // categoria: a que mais combina com o procedimento escolhido
+        const cats = (await clinicorpGet(wcreds, 'appointment/list_categories').catch(() => [])) as any[];
+        const wanted = norm(String(body.procedure || ''));
+        const cat = wanted ? cats.find(c => norm(c.Description || '').includes(wanted) || wanted.includes(norm(c.Description || ''))) || cats.find(c => /avalia/.test(wanted) && /avalia/.test(norm(c.Description || ''))) : undefined;
+
+        const created = await clinicorpPost(wcreds, 'appointment/create_appointment_by_api', {
+          Patient_PersonId: Number(patientId),
+          PatientName: patientName,
+          MobilePhone: String(body.phone || ''),
+          ...(body.email ? { Email: body.email } : {}),
+          fromTime: time,
+          toTime,
+          date: `${date}T03:00:00.000Z`,
+          Clinic_BusinessId: Number(businessId),
+          Dentist_PersonId: Number(pro.clinicorp_id),
+          ...(body.procedure ? { Procedures: String(body.procedure) } : {}),
+          ...(cat ? { CategoryId: Number(cat.id) } : {})
+        });
+        // traz o agendamento criado para o CRM do mesmo jeito que os demais (status, etiquetas, funil)
+        await syncClinic(sb, wcreds, clinicId, { daysBack: 1, daysForward: 400, dryRun: false });
+        await recordRun(sb, clinicId, true, 'Sincronização após criar agendamento', null);
+        return res.status(200).json({ ok: true, clinicorpId: pickId(created), message: 'Agendamento criado no Clinicorp.' });
+      }
+
+      // confirmar / cancelar: age no Clinicorp e depois no banco
+      const appointmentId = String(body.appointmentId || '');
+      const { data: apt } = await sb.from('appointments').select('id,clinic_id,clinicorp_id').eq('id', appointmentId).maybeSingle();
+      if (!apt || apt.clinic_id !== clinicId) return fail(res, 404, 'Agendamento não encontrado nesta clínica.');
+      if (!apt.clinicorp_id) return fail(res, 400, 'Este agendamento não existe no Clinicorp (foi criado só no CRM), então não dá para alterar por lá.');
+      if (action === 'confirm_appointment') {
+        await clinicorpPost(wcreds, 'appointment/confirm_appointment', { id: Number(apt.clinicorp_id) });
+        await sb.from('appointments').update({ status: 'confirmed' }).eq('id', apt.id);
+        return res.status(200).json({ ok: true, message: 'Agendamento confirmado no Clinicorp.' });
+      }
+      await clinicorpPost(wcreds, 'appointment/cancel_appointment', { id: String(apt.clinicorp_id) });
+      await sb.from('appointments').update({ status: 'cancelled' }).eq('id', apt.id);
+      return res.status(200).json({ ok: true, message: 'Agendamento cancelado no Clinicorp.' });
     }
 
     const creds = await loadCreds(sb, clinicId);

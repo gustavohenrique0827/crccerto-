@@ -7,6 +7,7 @@ import { cn } from '../../lib/utils';
 import ScheduleModal from './ScheduleModal';
 import { detectAppointmentConflicts } from '../../lib/calendarConflicts';
 import { BOOKING_PROFESSIONAL } from '../../lib/bookingRule';
+import { cancelClinicorpAppointment, confirmClinicorpAppointment, createClinicorpAppointment, fetchClinicIntegrations } from '../../lib/clinicorpSync';
 import { fetchAppointmentsFromDb, isSupabaseConfigured, saveAppointmentsToDb, statusBucket, formatPhoneBR } from '../../lib/supabase';
 
 type Apt = {
@@ -233,8 +234,20 @@ export default function AgendaPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, weekStart.getTime(), date.getTime(), loading]);
 
-  const handleAdd = async (apt: any) => {
+  const handleAdd = async (apt: any): Promise<boolean> => {
     const withClinic = { ...apt, clinicId: apt.clinicId && apt.clinicId !== '1' ? apt.clinicId : clinicId };
+    // Clínica ligada ao Clinicorp: o agendamento nasce lá (fonte da verdade) e volta para cá pela sincronização
+    const connected = (await fetchClinicIntegrations()).some(i => i.clinicId === withClinic.clinicId && i.hasKey);
+    if (connected) {
+      const r = await createClinicorpAppointment(withClinic.clinicId, {
+        patient: withClinic.patient, phone: withClinic.phone || '', date: withClinic.date, time: withClinic.time,
+        duration: withClinic.duration || 30, professional: withClinic.professional || '', procedure: withClinic.procedure
+      });
+      if (!r.ok) { addToast(r.message || 'O Clinicorp recusou o agendamento.', 'error'); return false; }
+      addToast(`Agendamento de "${withClinic.patient}" criado no Clinicorp.`, 'success');
+      await load();
+      return true;
+    }
     setApts(prev => [withClinic, ...prev]);
     if (isSupabaseConfigured()) {
       const ok = await saveAppointmentsToDb([withClinic]);
@@ -247,6 +260,15 @@ export default function AgendaPage() {
         localStorage.setItem('crm_appointments_data', JSON.stringify(list));
       } catch { /* */ }
     }
+    return true;
+  };
+
+  const actOnClinicorp = async (kind: 'confirm' | 'cancel', apt: Apt) => {
+    if (kind === 'cancel' && !window.confirm(`Cancelar o agendamento de ${apt.patient} no Clinicorp?`)) return;
+    const cid = apt.clinicId || clinicId || '';
+    const r = kind === 'confirm' ? await confirmClinicorpAppointment(cid, apt.id) : await cancelClinicorpAppointment(cid, apt.id);
+    addToast(r.ok ? (r.message || 'Feito.') : (r.message || 'O Clinicorp recusou.'), r.ok ? 'success' : 'error');
+    if (r.ok) { setDetail(null); load(); }
   };
 
   const openSlot = (d: Date, e: React.MouseEvent<HTMLElement>) => {
@@ -485,6 +507,12 @@ export default function AgendaPage() {
                   <p className="flex items-start gap-2 text-xs font-semibold text-rose-600 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 rounded-lg p-2.5">
                     <AlertTriangle size={14} className="mt-0.5 shrink-0" />Conflito com: {(conf.conflictingWith || []).map(x => x.patient).join(', ')}
                   </p>
+                )}
+                {(detail as any).clinicorp && b !== 'cancelled' && (
+                  <div className="flex gap-2">
+                    {(b === 'pending') && <button onClick={() => actOnClinicorp('confirm', detail)} className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold cursor-pointer">Confirmar no Clinicorp</button>}
+                    <button onClick={() => actOnClinicorp('cancel', detail)} className="flex-1 py-2.5 rounded-xl border border-rose-300 dark:border-rose-900 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-sm font-bold cursor-pointer">Cancelar agendamento</button>
+                  </div>
                 )}
                 {digits && (
                   <button onClick={() => { setDetail(null); openMessaging({ phone: detail.phone, name: detail.patient }); }} className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold cursor-pointer">

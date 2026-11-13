@@ -27,7 +27,7 @@ interface ScheduleModalProps {
   onClose: () => void;
   initialDate?: string;
   initialTime?: string;
-  onAddAppointment?: (appointment: any) => void;
+  onAddAppointment?: (appointment: any) => void | boolean | Promise<boolean | void>;
   clinicId?: string;
   clinicName?: string;
 }
@@ -181,7 +181,8 @@ export default function ScheduleModal({
     };
 
     if (onAddAppointment) {
-      onAddAppointment(newApt);
+      const added = await onAddAppointment(newApt);
+      if (added === false) { setIsSubmitting(false); return; } // recusado (ex.: pelo Clinicorp): mantém a janela aberta
     } else {
       try {
         const saved = localStorage.getItem('crm_appointments_data');

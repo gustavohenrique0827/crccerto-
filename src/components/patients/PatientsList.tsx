@@ -16,6 +16,7 @@ import PatientProfile from './PatientProfile';
 import NewPatientModal from './NewPatientModal';
 import { exportToCSV } from '../../lib/exportUtils';
 import { useApp } from '../../context/AppContext';
+import { createClinicorpPatient, fetchClinicIntegrations } from '../../lib/clinicorpSync';
 import { fetchPatientsFromDb, insertPatientInDb, isSupabaseConfigured, newUuid } from '../../lib/supabase';
 
 interface Patient {
@@ -96,8 +97,19 @@ export default function PatientsList() {
     addToast('Lista de pacientes exportada em CSV com sucesso!', 'success');
   };
 
-  const handleAddPatient = (patientData: any) => {
+  const handleAddPatient = async (patientData: any) => {
     const targetClinic = clinics.find(c => c.id === currentClinicId) || clinics[0];
+    // Clínica ligada ao Clinicorp: o paciente é cadastrado lá primeiro (fonte da verdade)
+    if (targetClinic && (await fetchClinicIntegrations()).some(i => i.clinicId === targetClinic.id && i.hasKey)) {
+      const r = await createClinicorpPatient(targetClinic.id, {
+        name: patientData.name, phone: patientData.phone || '', email: patientData.email || undefined,
+        birthDate: patientData.birthDate || undefined, notes: patientData.notes || undefined
+      });
+      if (!r.ok) { addToast(r.message || 'O Clinicorp recusou o cadastro do paciente.', 'error'); return; }
+      addToast(`Paciente "${patientData.name}" cadastrado no Clinicorp.`, 'success');
+      fetchPatientsFromDb(currentClinicId).then(list => { if (list) setPatients(list as any); });
+      return;
+    }
     const newP: Patient = {
       ...patientData,
       id: isSupabaseConfigured() ? newUuid() : String(Date.now()),
