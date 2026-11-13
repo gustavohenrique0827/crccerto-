@@ -145,7 +145,8 @@ export default function MessagingWorkspace() {
   useEffect(() => {
     if (!messagingTarget || leadsLoading) return;
     const key = phoneKey(messagingTarget.phone);
-    const found = leads.find(l => l.id === messagingTarget.leadId) || (key ? leads.find(l => phoneKey(l.whatsapp) === key || phoneKey(l.phone) === key) : undefined);
+    const found = leads.find(l => l.id === messagingTarget.leadId) || (key ? leads.find(l => phoneKey(l.whatsapp) === key || phoneKey(l.phone) === key) : undefined) ||
+      (messagingTarget.name ? leads.find(l => l.name.trim().toLowerCase() === messagingTarget.name!.trim().toLowerCase()) : undefined);
     const lead = found || ({
       id: `tel:${key || messagingTarget.phone || 'novo'}`, name: messagingTarget.name || '', phone: messagingTarget.phone || '', whatsapp: messagingTarget.phone || '',
       email: '', clinicId: currentClinic?.id || '', sourceId: 'manual', status: LeadStatus.NEW, lastInteractionAt: new Date().toISOString()

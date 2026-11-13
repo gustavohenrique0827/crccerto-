@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { MessageCircle, UserX, CalendarClock, PhoneCall, ChevronDown } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import { useClinicDataset, statusBucket, phoneDigits } from '../../lib/supabase';
+import { useTasks, CrmTask } from '../../lib/tasksStore';
+import { useClinicDataset, statusBucket, phoneDigits, newUuid } from '../../lib/supabase';
 import { cn } from '../../lib/utils';
 
 export type Kind = 'missed' | 'rebook' | 'confirm';
@@ -60,7 +61,8 @@ export const suggestionMessage = (s: Suggestion): { phone: string; name: string;
 
 /** Fila de follow-up gerada sozinha a partir da agenda do Clinicorp. */
 export default function ClinicorpSuggestions() {
-  const { currentClinicId, openMessaging } = useApp();
+  const { currentClinicId, clinics, user, addToast, openMessaging } = useApp();
+  const { tasks, saveTask } = useTasks();
   const { appointments, loading } = useClinicDataset(currentClinicId);
   const [open, setOpen] = useState(true);
   const [filter, setFilter] = useState<'all' | Kind>('all');
@@ -68,6 +70,28 @@ export default function ClinicorpSuggestions() {
   const items = useMemo<Suggestion[]>(() => buildSuggestions(appointments), [appointments]);
 
   const shown = items.filter(i => filter === 'all' || i.kind === filter);
+
+  // Cada follow-up vira uma tarefa operacional (aparece em Tarefas, com botão para a conversa)
+  const taskClinicId = currentClinicId && currentClinicId !== 'all' ? currentClinicId : clinics[0]?.id;
+  const taskTitle = (s: Suggestion) => s.kind === 'confirm' ? `Confirmar consulta de ${s.patient}` : s.kind === 'missed' ? `Reagendar ${s.patient} (faltou)` : `Reagendar ${s.patient}`;
+  const isOpenTask = (t: CrmTask) => t.status !== 'completed' && t.status !== 'cancelled';
+  const hasTask = (s: Suggestion) => tasks.some(t => isOpenTask(t) && t.title === taskTitle(s) && t.patientName === s.patient);
+  const makeTask = async (s: Suggestion): Promise<boolean> => {
+    if (!taskClinicId || hasTask(s)) return false;
+    const now = new Date();
+    const due = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    return saveTask({
+      id: newUuid(), title: taskTitle(s),
+      description: `${s.reason} · Consulta ${br(s.date)} ${s.time}${s.professional ? ` · ${s.professional}` : ''}${s.phone ? ` · Tel: ${s.phone}` : ''}`,
+      responsible: user?.name || '', responsibleId: user?.id, clinic: clinics.find(c => c.id === taskClinicId)?.name || '', clinicId: taskClinicId,
+      priority: s.kind === 'missed' ? 'high' : 'medium', status: 'todo', dueDate: due, patientName: s.patient
+    }, user?.id);
+  };
+  const makeAll = async () => {
+    let n = 0;
+    for (const s of shown) { if (await makeTask(s)) n++; }
+    addToast(n > 0 ? `${n} ${n === 1 ? 'tarefa criada' : 'tarefas criadas'} em Tarefas.` : 'Todos os follow-ups desta lista já têm tarefa.', n > 0 ? 'success' : 'info');
+  };
   const count = (k: Kind) => items.filter(i => i.kind === k).length;
   if (loading || items.length === 0) return null;
 
@@ -89,6 +113,7 @@ export default function ClinicorpSuggestions() {
             {([['all', `Todos (${items.length})`], ['confirm', `Confirmar (${count('confirm')})`], ['missed', `Faltas (${count('missed')})`], ['rebook', `Reagendar (${count('rebook')})`]] as const).map(([id, label]) => (
               <button key={id} onClick={() => setFilter(id as any)} className={cn('px-2.5 py-1 rounded-full text-[11px] font-bold border cursor-pointer', filter === id ? 'bg-[var(--color-primary-blue)] text-white border-transparent' : 'border-[var(--color-border-default)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-sunken)]')}>{label}</button>
             ))}
+            <button onClick={makeAll} className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer">Criar tarefas desta lista ({shown.filter(s => !hasTask(s)).length})</button>
           </div>
           <ul className="divide-y divide-[var(--color-border-subtle)] max-h-80 overflow-y-auto custom-scrollbar">
             {shown.slice(0, 60).map(s => {
@@ -100,6 +125,9 @@ export default function ClinicorpSuggestions() {
                     <p className="text-sm font-bold text-[var(--color-text-primary)] truncate">{s.patient}</p>
                     <p className="text-xs text-[var(--color-text-muted)] truncate">{s.reason} · {br(s.date)} {s.time}{s.professional ? ` · ${s.professional.split(' ')[0]}` : ''}</p>
                   </div>
+                  {hasTask(s)
+                    ? <span className="text-[11px] font-bold text-emerald-600 shrink-0">✓ Tarefa criada</span>
+                    : <button onClick={async () => { const ok = await makeTask(s); addToast(ok ? 'Tarefa criada em Tarefas.' : 'Não foi possível criar a tarefa.', ok ? 'success' : 'error'); }} className="px-3 py-1.5 rounded-lg border border-[var(--color-border-default)] text-xs font-bold text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-sunken)] shrink-0 cursor-pointer">Virar tarefa</button>}
                   {link ? (
                     <button onClick={() => openMessaging(link)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shrink-0 cursor-pointer"><MessageCircle size={13} />Mensagem</button>
                   ) : <span className="text-[11px] text-[var(--color-text-faint)] shrink-0">sem telefone</span>}
