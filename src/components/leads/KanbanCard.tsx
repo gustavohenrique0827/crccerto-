@@ -17,7 +17,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@/src/lib/utils';
-import { STAGE_VAR } from '@/src/lib/stageColors';
+import { stageList, stageColor } from '@/src/lib/funnelConfig';
 import { formatPhoneBR } from '@/src/lib/supabase';
 
 interface KanbanCardProps {
@@ -33,17 +33,6 @@ interface KanbanCardProps {
   isOverlay?: boolean;
 }
 
-const STAGES: { id: LeadStatus; label: string }[] = [
-  { id: LeadStatus.NEW, label: 'Novo lead' },
-  { id: LeadStatus.FIRST_CONTACT, label: '1° contato' },
-  { id: LeadStatus.SECOND_CONTACT, label: 'Follow-up' },
-  { id: LeadStatus.INTERACTED, label: 'Interagiu' },
-  { id: LeadStatus.APPOINTMENT, label: 'Agendado' },
-  { id: LeadStatus.ATTENDED, label: 'Compareceu' },
-  { id: LeadStatus.SOLD, label: 'Comprou' },
-  { id: LeadStatus.MISSED, label: 'Faltou' },
-  { id: LeadStatus.DISQUALIFIED, label: 'Desqualificado' },
-];
 
 export default function KanbanCard({ 
   lead, 
@@ -109,7 +98,7 @@ export default function KanbanCard({
       className="relative"
     >
       <motion.div 
-        style={{ borderLeftColor: STAGE_VAR[lead.status], borderLeftWidth: 3 }}
+        style={{ borderLeftColor: stageColor(lead.status), borderLeftWidth: 3 }}
         onClick={() => { if (!isDragging) onOpenDetail(lead); }}
         className={cn(
           "bg-[var(--color-surface-elevated)] rounded-[var(--radius-control)] border transition-all cursor-pointer active:cursor-grabbing group/card relative shadow-[var(--shadow-control)]",
@@ -198,7 +187,7 @@ export default function KanbanCard({
                     <div className="px-3 py-1 text-[9px] font-extrabold text-[var(--color-text-faint)] uppercase tracking-wider border-b border-[var(--color-border-subtle)] mb-1">
                       Mudar Status
                     </div>
-                    {STAGES.map((stage) => (
+                    {stageList().map((stage) => (
                       <button
                         key={stage.id}
                         onClick={(e) => {

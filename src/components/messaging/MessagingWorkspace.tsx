@@ -6,23 +6,13 @@ import { useApp } from '../../context/AppContext';
 import { cn } from '../../lib/utils';
 import { Lead, LeadStatus } from '../../types';
 import { leadDisplayName } from '../../lib/leadName';
+import { stageLabel, useFunnel } from '../../lib/funnelConfig';
 import LeadDetail from '../leads/LeadDetail';
 import {
   ConversationRow, addLeadNote, getSupabase, addOutgoingMessage, fetchConversationRows, formatPhoneBR, isSupabaseConfigured, localDay, phoneKey, useSupabaseLeads
 } from '../../lib/supabase';
 
-const STAGE_LABEL: Record<string, string> = {
-  [LeadStatus.NEW]: 'Novo lead',
-  [LeadStatus.FIRST_CONTACT]: '1º contato',
-  [LeadStatus.SECOND_CONTACT]: 'Follow-up',
-  [LeadStatus.THIRD_CONTACT]: 'Follow-up',
-  [LeadStatus.INTERACTED]: 'Interagiu',
-  [LeadStatus.APPOINTMENT]: 'Agendado',
-  [LeadStatus.ATTENDED]: 'Compareceu',
-  [LeadStatus.SOLD]: 'Vendido',
-  [LeadStatus.MISSED]: 'Faltou',
-  [LeadStatus.DISQUALIFIED]: 'Desqualificado'
-};
+const STAGE_LABEL = new Proxy({} as Record<string, string>, { get: (_t, k) => stageLabel(String(k)) });
 
 type Filter = 'all' | 'unanswered' | 'waiting';
 
@@ -70,6 +60,7 @@ const waLink = (phone: string, text?: string) => {
 
 export default function MessagingWorkspace() {
   const { currentClinicId, currentClinic, user, addToast, messagingTarget, clearMessagingTarget } = useApp();
+  useFunnel();
   const { leads, loading: leadsLoading } = useSupabaseLeads(currentClinicId);
   const [rows, setRows] = useState<ConversationRow[]>([]);
   const [loading, setLoading] = useState(true);

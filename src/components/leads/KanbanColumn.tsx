@@ -30,19 +30,9 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { motion, AnimatePresence } from 'motion/react';
 import KanbanCard from './KanbanCard';
+import { stageList } from '@/src/lib/funnelConfig';
 import { cn } from '@/src/lib/utils';
 
-const ALL_STAGES: { id: LeadStatus; label: string }[] = [
-  { id: LeadStatus.NEW, label: 'Novo lead' },
-  { id: LeadStatus.FIRST_CONTACT, label: '1° contato' },
-  { id: LeadStatus.SECOND_CONTACT, label: 'Follow-up' },
-  { id: LeadStatus.INTERACTED, label: 'Interagiu' },
-  { id: LeadStatus.APPOINTMENT, label: 'Agendado' },
-  { id: LeadStatus.ATTENDED, label: 'Compareceu' },
-  { id: LeadStatus.SOLD, label: 'Comprou' },
-  { id: LeadStatus.MISSED, label: 'Faltou' },
-  { id: LeadStatus.DISQUALIFIED, label: 'Desqualificado' },
-];
 
 const AVAILABLE_OWNERS = [
   'Dr. Roberto Silva',
@@ -70,7 +60,7 @@ const DEFAULT_STAGE_GOALS: Record<LeadStatus, StageGoal> = {
 
 interface KanbanColumnProps {
   key?: string | number;
-  stage: { id: LeadStatus; label: string; color: string; bg: string };
+  stage: { id: LeadStatus; label: string; color: string; bg: string; colorValue?: string };
   leads: Lead[];
   totalLeadsCount: number;
   selectedLeadIds?: string[];
@@ -257,7 +247,7 @@ export default function KanbanColumn({
               )}
             </button>
 
-            <div className={`w-2.5 h-2.5 rounded-full ${stage.color} ring-2 ring-[var(--color-surface)] shadow-xs shrink-0`} />
+            <div className="w-2.5 h-2.5 rounded-full ring-2 ring-[var(--color-surface)] shadow-xs shrink-0" style={{ background: stage.colorValue }} />
             
             <h3 className={cn(
               "font-black text-[var(--color-text-primary)] uppercase tracking-wider truncate",
@@ -430,7 +420,7 @@ export default function KanbanColumn({
 
                       {activeSubMenu === 'move' && (
                         <div className="bg-[var(--color-surface-sunken)] p-1.5 border-y border-[var(--color-border-default)] space-y-1 max-h-48 overflow-y-auto custom-scrollbar">
-                          {ALL_STAGES.filter(s => s.id !== stage.id).map(s => (
+                          {stageList().filter(s => s.id !== stage.id).map(s => (
                             <button
                               key={s.id}
                               onClick={() => handleApplyBatchMove(s.id)}
@@ -601,9 +591,9 @@ export default function KanbanColumn({
             <div 
               className={cn(
                 "h-full rounded-full transition-all duration-500", 
-                isGoalAchieved ? "bg-[var(--color-success)]" : stage.color
+                isGoalAchieved && "bg-[var(--color-success)]"
               )} 
-              style={{ width: `${Math.min(100, Math.max(countProgressPercent, leadCount > 0 ? 5 : 0))}%` }}
+              style={{ width: `${Math.min(100, Math.max(countProgressPercent, leadCount > 0 ? 5 : 0))}%`, ...(isGoalAchieved ? {} : { background: stage.colorValue }) }}
             />
           </div>
         </div>
