@@ -501,10 +501,11 @@ export default function KanbanColumn({
             ? "border-[var(--color-primary-blue)] bg-[var(--color-primary-blue)]/10 ring-2 ring-[var(--color-primary-blue)]/20 shadow-lg"
             : isDraggingLead
               ? "border-dashed border-[var(--color-primary-blue)]/50 bg-[var(--color-primary-blue)]/5"
-              : "border-transparent group-hover:border-[var(--color-border-default)]",
+              : "",
           isCompact || columnWidth < 250 ? "p-1.5 space-y-1.5" : "p-2.5 space-y-2.5",
           heatBg
         )}
+        style={!isOver && !isDraggingLead ? { borderColor: `color-mix(in srgb, ${stage.colorValue || 'var(--color-border-default)'} 55%, transparent)` } : undefined}
       >
         <div className={cn(
           "flex-1 space-y-2",

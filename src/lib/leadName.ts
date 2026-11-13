@@ -1,7 +1,7 @@
 /** Nome sem valor para a equipe: vazio, só número/telefone ou rótulo genérico do WhatsApp. */
 export const isPlaceholderName = (name?: string | null): boolean => {
   const n = String(name || '').trim();
-  return !n || /^[\s+\d()\-.]+$/.test(n) || /^(whatsapp|novo lead|lead|sem nome|desconhecido|unknown)$/i.test(n);
+  return !n || /^[\s+\d()\-.]+$/.test(n) || /^(lead whatsapp|contato whatsapp|cliente whatsapp|whatsapp|novo lead|lead|sem nome|desconhecido|unknown)$/i.test(n);
 };
 
 /**
