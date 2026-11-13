@@ -1,3 +1,4 @@
+import { leadDisplayName } from '../../lib/leadName';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Search, 
@@ -466,10 +467,10 @@ export default function LeadTable({ globalSearchTerm = '', onSelectLead }: LeadT
                   <td className="px-6 py-3.5">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full bg-[var(--color-primary-blue)]/10 text-[var(--color-primary-blue)] font-bold text-xs flex items-center justify-center shrink-0">
-                        {lead.name.charAt(0)}
+                        {leadDisplayName(lead).charAt(0)}
                       </div>
                       <div>
-                        <p className="text-xs font-bold text-[var(--color-text-primary)] leading-none">{lead.name}</p>
+                        <p className="text-xs font-bold text-[var(--color-text-primary)] leading-none">{leadDisplayName(lead)}</p>
                         <p className="text-[11px] text-[var(--color-text-faint)] mt-1">{formatPhoneBR(lead.whatsapp || lead.phone)}</p>
                       </div>
                     </div>

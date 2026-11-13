@@ -106,22 +106,26 @@ async function advanceLeadStages(sb: any, clinicId: string, appointments: any[])
     if (!k) continue;
     const when = `${a.appointment_date} ${a.start_time}`;
     const cur = latest.get(k);
-    if (!cur || when > cur.when) latest.set(k, { when, status: a.status });
+    if (!cur || when > cur.when) latest.set(k, { when, status: a.status, name: a.patient_name });
   }
   if (latest.size === 0) return { agendamento: 0, compareceu: 0, faltou: 0 };
 
   const leads: any[] = [];
   for (let from = 0; ; from += 1000) {
-    const { data, error } = await sb.from('leads').select('id,phone,whatsapp,status').eq('clinic_id', clinicId).range(from, from + 999);
+    const { data, error } = await sb.from('leads').select('id,name,phone,whatsapp,status').eq('clinic_id', clinicId).range(from, from + 999);
     if (error) throw new Error(`leads: ${error.message}`);
     leads.push(...(data || []));
     if (!data || data.length < 1000) break;
   }
 
   const moves: Record<string, string[]> = { agendamento: [], compareceu: [], faltou: [] };
+  const renames: { id: string; name: string }[] = [];
   for (const l of leads) {
     const apt = latest.get(phoneKey(l.phone)) || latest.get(phoneKey(l.whatsapp));
     if (!apt) continue;
+    // Nome: o da agenda do Clinicorp vale mais que o do WhatsApp
+    const aptName = String(apt.name || '').trim();
+    if (aptName && !/^[\s+\d()\-.]+$/.test(aptName) && aptName.toLowerCase() !== String(l.name || '').trim().toLowerCase()) renames.push({ id: l.id, name: aptName });
     const cur = String(l.status);
     if (cur === 'vendido' || cur === 'comprou' || cur === 'desqualificado' || cur === 'perdido') continue;
     const target = apt.status === 'attended' ? 'compareceu' : apt.status === 'missed' ? 'faltou' : 'agendamento';
@@ -132,6 +136,10 @@ async function advanceLeadStages(sb: any, clinicId: string, appointments: any[])
       target === 'compareceu' ? (rank !== undefined && rank <= 5) || cur === 'faltou' :
       /* faltou */ rank !== undefined && rank <= 5;
     if (ok) moves[target].push(l.id);
+  }
+
+  for (let i = 0; i < renames.length; i += 20) {
+    await Promise.all(renames.slice(i, i + 20).map(r => sb.from('leads').update({ name: r.name }).eq('id', r.id)));
   }
 
   const result = { agendamento: 0, compareceu: 0, faltou: 0 } as Record<string, number>;

@@ -149,7 +149,7 @@ function AptCard({ p, conflict, conflictNames, showPro, onOpen }: {
 }
 
 export default function AgendaPage() {
-  const { currentClinicId, clinics, addToast } = useApp();
+  const { currentClinicId, clinics, addToast, openMessaging } = useApp();
   const clinicId = currentClinicId && currentClinicId !== 'all' ? currentClinicId : clinics[0]?.id;
 
   const [apts, setApts] = useState<Apt[]>([]);
@@ -487,9 +487,9 @@ export default function AgendaPage() {
                   </p>
                 )}
                 {digits && (
-                  <a href={`https://wa.me/${digits.length <= 11 ? '55' + digits : digits}`} target="_blank" rel="noreferrer" className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold">
-                    <MessageCircle size={16} /> Chamar no WhatsApp
-                  </a>
+                  <button onClick={() => { setDetail(null); openMessaging({ phone: detail.phone, name: detail.patient }); }} className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold cursor-pointer">
+                    <MessageCircle size={16} /> Abrir conversa na Mensageria
+                  </button>
                 )}
               </div>
             </div>

@@ -5,16 +5,17 @@ import {
 import { useApp } from '../../context/AppContext';
 import { cn } from '../../lib/utils';
 import { Lead, LeadStatus } from '../../types';
+import { leadDisplayName } from '../../lib/leadName';
 import LeadDetail from '../leads/LeadDetail';
 import {
-  ConversationRow, addLeadNote, getSupabase, addOutgoingMessage, fetchConversationRows, formatPhoneBR, isSupabaseConfigured, localDay, useSupabaseLeads
+  ConversationRow, addLeadNote, getSupabase, addOutgoingMessage, fetchConversationRows, formatPhoneBR, isSupabaseConfigured, localDay, phoneKey, useSupabaseLeads
 } from '../../lib/supabase';
 
 const STAGE_LABEL: Record<string, string> = {
   [LeadStatus.NEW]: 'Novo lead',
   [LeadStatus.FIRST_CONTACT]: '1º contato',
-  [LeadStatus.SECOND_CONTACT]: '2º contato',
-  [LeadStatus.THIRD_CONTACT]: '3º contato',
+  [LeadStatus.SECOND_CONTACT]: 'Follow-up',
+  [LeadStatus.THIRD_CONTACT]: 'Follow-up',
   [LeadStatus.INTERACTED]: 'Interagiu',
   [LeadStatus.APPOINTMENT]: 'Agendado',
   [LeadStatus.ATTENDED]: 'Compareceu',
@@ -68,7 +69,7 @@ const waLink = (phone: string, text?: string) => {
 };
 
 export default function MessagingWorkspace() {
-  const { currentClinicId, currentClinic, user, addToast } = useApp();
+  const { currentClinicId, currentClinic, user, addToast, messagingTarget, clearMessagingTarget } = useApp();
   const { leads, loading: leadsLoading } = useSupabaseLeads(currentClinicId);
   const [rows, setRows] = useState<ConversationRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,6 +80,7 @@ export default function MessagingWorkspace() {
   const [sending, setSending] = useState(false);
   const [detailLead, setDetailLead] = useState<Lead | null>(null);
   const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [starter, setStarter] = useState<Lead | null>(null); // contato sem histórico, aberto por um botão de WhatsApp
   const threadEndRef = useRef<HTMLDivElement>(null);
 
   // Modelos de mensagem: ficam no navegador, separados por clínica
@@ -132,8 +134,29 @@ export default function MessagingWorkspace() {
       if (!last) return;
       out.push({ lead, rows: list, last, fromClient: last.type === 'mensagem_cliente' });
     });
+    if (starter && !out.some(t => t.lead.id === starter.id)) {
+      const now = new Date().toISOString();
+      out.push({ lead: starter, rows: [], last: { id: 'new', leadId: starter.id, type: 'mensagem_responsavel', message: 'Nova conversa', createdAt: now }, fromClient: false });
+    }
     return out.sort((a, b) => b.last.createdAt.localeCompare(a.last.createdAt));
-  }, [rows, leads]);
+  }, [rows, leads, starter]);
+
+  // Botão de WhatsApp em outra tela: abre a conversa do contato (e já deixa a mensagem no campo)
+  useEffect(() => {
+    if (!messagingTarget || leadsLoading) return;
+    const key = phoneKey(messagingTarget.phone);
+    const found = leads.find(l => l.id === messagingTarget.leadId) || (key ? leads.find(l => phoneKey(l.whatsapp) === key || phoneKey(l.phone) === key) : undefined);
+    const lead = found || ({
+      id: `tel:${key || messagingTarget.phone || 'novo'}`, name: messagingTarget.name || '', phone: messagingTarget.phone || '', whatsapp: messagingTarget.phone || '',
+      email: '', clinicId: currentClinic?.id || '', sourceId: 'manual', status: LeadStatus.NEW, lastInteractionAt: new Date().toISOString()
+    } as unknown as Lead);
+    setStarter(lead);
+    setSelectedId(lead.id);
+    setFilter('all');
+    setSearch('');
+    if (messagingTarget.draft) setDraft(messagingTarget.draft);
+    clearMessagingTarget();
+  }, [messagingTarget, leads, leadsLoading, currentClinic?.id, clearMessagingTarget]);
 
   const counts = useMemo(() => ({
     all: threads.length,
@@ -156,7 +179,7 @@ export default function MessagingWorkspace() {
   useEffect(() => { threadEndRef.current?.scrollIntoView({ block: 'end' }); }, [selectedId, messages.length]);
 
   const fill = (text: string) => text
-    .replace(/\{nome\}/g, (selected?.lead.name || '').split(' ')[0] || '')
+    .replace(/\{nome\}/g, selected ? leadDisplayName(selected.lead).split(' ')[0].replace(/^NOVO$/, '') : '')
     .replace(/\{clinica\}/g, currentClinic?.name || 'nossa clínica');
 
   const sendViaWhatsapp = async () => {
@@ -240,11 +263,11 @@ export default function MessagingWorkspace() {
             {visible.map(t => (
               <button key={t.lead.id} onClick={() => setSelectedId(t.lead.id)} className={cn('w-full text-left px-3 py-3 flex gap-3 border-b border-slate-100 dark:border-slate-800/70 cursor-pointer transition-colors', selectedId === t.lead.id ? 'bg-blue-50 dark:bg-blue-950/40' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50')}>
                 <span className="w-10 h-10 shrink-0 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-xs font-extrabold text-slate-600 dark:text-slate-200">
-                  {t.lead.name.split(' ').slice(0, 2).map(p => p[0]).join('').toUpperCase()}
+                  {leadDisplayName(t.lead).split(' ').slice(0, 2).map(p => p[0]).join('').toUpperCase()}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center justify-between gap-2">
-                    <span className={cn('truncate text-[13px]', t.fromClient ? 'font-extrabold text-slate-900 dark:text-white' : 'font-bold text-slate-700 dark:text-slate-200')}>{t.lead.name}</span>
+                    <span className={cn('truncate text-[13px]', t.fromClient ? 'font-extrabold text-slate-900 dark:text-white' : 'font-bold text-slate-700 dark:text-slate-200')}>{leadDisplayName(t.lead)}</span>
                     <span className={cn('shrink-0 text-[11px]', t.fromClient ? 'font-bold text-blue-600 dark:text-blue-400' : 'text-slate-400')}>{timeAgo(t.last.createdAt)}</span>
                   </span>
                   <span className="flex items-center gap-1 mt-0.5 text-xs text-slate-500 dark:text-slate-400">
@@ -274,7 +297,7 @@ export default function MessagingWorkspace() {
               <div className="shrink-0 flex items-center gap-3 px-4 py-3 border-b border-slate-200 dark:border-slate-800">
                 <button onClick={() => setSelectedId(null)} aria-label="Voltar" className="lg:hidden p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"><ArrowLeft size={18} /></button>
                 <div className="min-w-0 flex-1">
-                  <h2 className="text-sm font-extrabold text-slate-900 dark:text-white truncate">{selected.lead.name}</h2>
+                  <h2 className="text-sm font-extrabold text-slate-900 dark:text-white truncate">{leadDisplayName(selected.lead)}</h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400">{formatPhoneBR(selected.lead.whatsapp || selected.lead.phone)} · {STAGE_LABEL[selected.lead.status] || selected.lead.status}{selected.lead.responsibleName ? ` · ${selected.lead.responsibleName}` : ''}</p>
                 </div>
                 <button onClick={() => setDetailLead(selected.lead)} className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer">
@@ -326,9 +349,20 @@ export default function MessagingWorkspace() {
                       <>
                         <div className="fixed inset-0 z-40" onClick={() => setTemplatesOpen(false)} />
                         <div className="absolute bottom-full mb-2 left-0 z-50 w-80 max-h-72 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-1.5">
+                          <button onClick={() => {
+                            if (!draft.trim()) { addToast('Escreva a mensagem no campo e clique de novo para salvá-la como modelo.', 'info'); return; }
+                            const title = window.prompt('Nome do modelo (ex.: Pós-orçamento)');
+                            if (!title?.trim()) return;
+                            const next = [...templates, { id: `t${Date.now()}`, title: title.trim(), text: draft.trim() }];
+                            setTemplates(next);
+                            try { localStorage.setItem(tplKey, JSON.stringify(next)); } catch { /* */ }
+                            setTemplatesOpen(false);
+                          }} className="w-full text-left px-3 py-2 rounded-lg text-xs font-bold text-blue-600 dark:text-blue-400 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer">+ Salvar o texto atual como modelo</button>
                           {templates.map((t: { id: string; title: string; text: string }) => (
                             <button key={t.id} onClick={() => { setDraft(fill(t.text)); setTemplatesOpen(false); }} className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer">
-                              <span className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-100"><FileText size={12} />{t.title}</span>
+                              <span className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-100"><FileText size={12} />{t.title}{t.id.startsWith('t') && /^t\d{6,}$/.test(t.id) && (
+                                <span role="button" tabIndex={0} title="Excluir modelo" onClick={(e) => { e.stopPropagation(); const next = templates.filter((x: { id: string }) => x.id !== t.id); setTemplates(next); try { localStorage.setItem(tplKey, JSON.stringify(next)); } catch { /* */ } }} className="ml-auto text-slate-400 hover:text-rose-500">×</span>
+                              )}</span>
                               <span className="block text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5">{t.text}</span>
                             </button>
                           ))}
