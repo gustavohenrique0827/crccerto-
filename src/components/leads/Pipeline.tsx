@@ -42,22 +42,14 @@ import KanbanCard from './KanbanCard';
 import { cn } from '@/src/lib/utils';
 import { exportToCSV } from '../../lib/exportUtils';
 import { useApp } from '../../context/AppContext';
+import { stageList, useFunnel } from '../../lib/funnelConfig';
 import { useSupabaseLeads, localDay, businessDay } from '../../lib/supabase';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 
-const STAGES: { id: LeadStatus; label: string; color: string; bg: string }[] = [
-  { id: LeadStatus.NEW, label: 'Novo lead', color: 'bg-[var(--stage-0)]', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.FIRST_CONTACT, label: '1° contato', color: 'bg-[var(--stage-1)]', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.SECOND_CONTACT, label: 'Follow-up', color: 'bg-[var(--stage-2)]', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.INTERACTED, label: 'Interagiu', color: 'bg-[var(--stage-4)]', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.APPOINTMENT, label: 'Agendado', color: 'bg-[var(--stage-5)]', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.ATTENDED, label: 'Compareceu', color: 'bg-[var(--stage-6)]', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.SOLD, label: 'Comprou', color: 'bg-[var(--stage-7)]', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.MISSED, label: 'Faltou', color: 'bg-[var(--stage-lost)]', bg: 'bg-[var(--color-surface-sunken)]' },
-  { id: LeadStatus.DISQUALIFIED, label: 'Desqualificado', color: 'bg-[var(--stage-void)]', bg: 'bg-[var(--color-surface-sunken)]' },
-];
+const STAGE_BG = 'bg-[var(--color-surface-sunken)]';
+const buildStages = () => stageList().map(s => ({ ...s, color: '', bg: STAGE_BG }));
 
 const dayStr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const DATE_PRESETS = [
@@ -112,7 +104,9 @@ interface PipelineProps {
 
 export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'all', onLeadClick }: PipelineProps) {
   const { addToast } = useApp();
-  const [stages, setStages] = useState(STAGES);
+  const funnelVersion = useFunnel();
+  const [stages, setStages] = useState(buildStages);
+  useEffect(() => { setStages(buildStages()); }, [funnelVersion]);
   const { leads, loading, updateLeadStatus } = useSupabaseLeads(selectedClinicId);
   const [viewMode, setViewMode] = useState<'kanban' | 'list'>('kanban');
   const [isCompact, setIsCompact] = useState(false);
@@ -296,7 +290,7 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
     for (const id of leadIds) {
       await updateLeadStatus(id, targetStage);
     }
-    const stageName = STAGES.find(s => s.id === targetStage)?.label || targetStage;
+    const stageName = buildStages().find(s => s.id === targetStage)?.label || targetStage;
     addToast(`${leadIds.length} leads movidos para "${stageName}"`, 'success');
     setSelectedLeadIds(prev => prev.filter(id => !leadIds.includes(id)));
   };
@@ -320,7 +314,7 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
 
   const handleStatusChange = (leadId: string, newStatus: LeadStatus) => {
     updateLeadStatus(leadId, newStatus);
-    const stageName = STAGES.find(s => s.id === newStatus)?.label || newStatus;
+    const stageName = buildStages().find(s => s.id === newStatus)?.label || newStatus;
     addToast(`Lead movido para "${stageName}"`, 'success');
   };
 
@@ -364,7 +358,7 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
       const current = leads.find(l => l.id === leadId);
       if (current && current.status !== overStatus) {
         updateLeadStatus(leadId, overStatus);
-        const stageName = STAGES.find(st => st.id === overStatus)?.label || overStatus;
+        const stageName = buildStages().find(st => st.id === overStatus)?.label || overStatus;
         addToast(`Lead movido para "${stageName}"`, 'success');
       }
       return;
@@ -375,7 +369,7 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
 
     if (activeLead && overLead && activeLead.status !== overLead.status) {
       updateLeadStatus(leadId, overLead.status);
-      const stageName = STAGES.find(st => st.id === overLead.status)?.label || overLead.status;
+      const stageName = buildStages().find(st => st.id === overLead.status)?.label || overLead.status;
       addToast(`Lead movido para "${stageName}"`, 'success');
     }
   };
@@ -770,7 +764,7 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
                   className="bg-[var(--color-surface-elevated)] border-2 border-[var(--color-primary-blue)] p-3 rounded-[var(--radius-panel)] shadow-[var(--shadow-panel)] flex items-center gap-2 text-xs font-bold text-[var(--color-text-primary)]"
                 >
                   <GripVertical size={16} className="text-[var(--color-primary-blue)]" />
-                  <div className={`w-3 h-3 rounded-full ${activeStage.color}`} />
+                  <div className="w-3 h-3 rounded-full" style={{ background: activeStage.colorValue }} />
                   <span>Reordenando: {activeStage.label}</span>
                 </div>
               ) : null}

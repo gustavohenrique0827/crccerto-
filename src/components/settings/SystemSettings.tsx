@@ -23,6 +23,7 @@ import ClinicSettings from './ClinicSettings';
 import IntegrationsWorkspace from '../integrations/IntegrationsWorkspace';
 import ModuleManagement from './ModuleManagement';
 import TeamManagement from '../team/TeamManagement';
+import FunnelEditor from './FunnelEditor';
 
 type SettingsSectionId = 'general' | 'clinics' | 'users' | 'modules' | 'crm' | 'notifications' | 'integrations' | 'data';
 
@@ -127,29 +128,7 @@ export default function SystemSettings() {
           {activeSection === 'crm' && (
             <div className="space-y-6 animate-fade-in">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Card className="space-y-4">
-                  <h4 className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest flex items-center gap-2">
-                    <Kanban size={16} className="text-[var(--color-primary-blue)]" />
-                    Etapas do Pipeline de Atendimento
-                  </h4>
-                  <div className="space-y-2">
-                    {[
-                      'Novo Lead Recebido', 
-                      '1º Contato Realizado', 
-                      '2º Contato / Em Negociação', 
-                      '3º Contato / Persistência', 
-                      'Interagiu & Qualificado', 
-                      'Agendamento Marcado', 
-                      'Compareceu à Consulta', 
-                      'Vendido / Fechou Plano'
-                    ].map((stage, idx) => (
-                      <div key={stage} className="flex items-center justify-between p-3 bg-[var(--color-surface-sunken)] rounded-[var(--radius-control)] text-xs font-semibold text-[var(--color-text-primary)]">
-                        <span>{idx + 1}. {stage}</span>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-[var(--color-success)]/10 text-[var(--color-success)] border border-[var(--color-success)]/25 whitespace-nowrap">Ativa</span>
-                      </div>
-                    ))}
-                  </div>
-                </Card>
+                <FunnelEditor />
 
                 <Card className="space-y-4 flex flex-col justify-between">
                   <div className="space-y-3">
