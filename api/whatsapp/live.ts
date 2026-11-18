@@ -249,22 +249,27 @@ export default async function handler(req: Req, res: Res) {
       const forStatus = new Map<string, Set<string>>(); // chave do telefone -> estados sugeridos
       const perLabel: any[] = [];
       let unresolved = 0;
+      let lidsLoaded = 0;
       for (const session of sessions) {
         const sess = encodeURIComponent(session);
         const labels = await waha(`/api/${sess}/labels`);
         if (!Array.isArray(labels)) continue;
+        // Mapa lid -> telefone de uma vez só (uma chamada em vez de uma por contato)
+        const lidMap = new Map<string, string>();
+        const lids = await waha(`/api/${sess}/lids?limit=5000`, 20000);
+        lidsLoaded += Array.isArray(lids) ? lids.length : 0;
+        if (Array.isArray(lids)) for (const x of lids) { if (x?.lid && x?.pn) lidMap.set(String(x.lid), String(x.pn)); }
         await Promise.all(labels.map(async (l: any) => {
           const target = ruleFor(String(l.name || ''));
           if (!target) { perLabel.push({ label: l.name, regra: 'ignorada', chats: 0 }); return; }
-          const chats = await waha(`/api/${sess}/labels/${encodeURIComponent(String(l.id))}/chats`, 15000);
-          const list: any[] = Array.isArray(chats) ? chats : [];
+          const chatsRes = await wahaRaw(`/api/${sess}/labels/${encodeURIComponent(String(l.id))}/chats`, 20000);
+          const list: any[] = Array.isArray(chatsRes.json) ? chatsRes.json : [];
           let matched = 0;
           for (const c of list) {
             let id = String(c?.id?._serialized || c?.id || '');
             if (id.endsWith('@g.us')) continue;
             if (id.endsWith('@lid')) {
-              const r = await waha(`/api/${sess}/lids/${encodeURIComponent(id)}`);
-              const pn = String(r?.pn || '');
+              const pn = lidMap.get(id) || '';
               if (!pn) { unresolved++; continue; }
               id = pn;
             }
@@ -274,7 +279,7 @@ export default async function handler(req: Req, res: Res) {
             if (!forStatus.has(k)) forStatus.set(k, new Set());
             forStatus.get(k)!.add(target);
           }
-          perLabel.push({ label: l.name, regra: target, chats: list.length, comTelefone: matched });
+          perLabel.push({ label: l.name, regra: target, httpStatus: chatsRes.status, chats: list.length, comTelefone: matched });
         }));
       }
       const { data: leadRows } = await sb.from('leads').select('id,name,phone,whatsapp,status').eq('clinic_id', clinicId).limit(5000);
@@ -301,7 +306,7 @@ export default async function handler(req: Req, res: Res) {
           }
         }
       }
-      return res.status(200).json({ ok: true, source: 'waha', aplicado: apply, leadsAfetados: touched, porEtapa: Object.fromEntries(Object.entries(moves).map(([k, v]) => [k, v.length])), porEtiqueta: perLabel, semTelefoneResolvido: unresolved, erros });
+      return res.status(200).json({ ok: true, source: 'waha', aplicado: apply, leadsAfetados: touched, porEtapa: Object.fromEntries(Object.entries(moves).map(([k, v]) => [k, v.length])), porEtiqueta: perLabel, semTelefoneResolvido: unresolved, lidsCarregados: lidsLoaded, erros });
     }
 
     if (body.action === 'messages') {
