@@ -253,9 +253,9 @@ export default async function handler(req: Req, res: Res) {
         const sess = encodeURIComponent(session);
         const labels = await waha(`/api/${sess}/labels`);
         if (!Array.isArray(labels)) continue;
-        for (const l of labels) {
+        await Promise.all(labels.map(async (l: any) => {
           const target = ruleFor(String(l.name || ''));
-          if (!target) { perLabel.push({ label: l.name, regra: 'ignorada', chats: 0 }); continue; }
+          if (!target) { perLabel.push({ label: l.name, regra: 'ignorada', chats: 0 }); return; }
           const chats = await waha(`/api/${sess}/labels/${encodeURIComponent(String(l.id))}/chats`, 15000);
           const list: any[] = Array.isArray(chats) ? chats : [];
           let matched = 0;
@@ -275,7 +275,7 @@ export default async function handler(req: Req, res: Res) {
             forStatus.get(k)!.add(target);
           }
           perLabel.push({ label: l.name, regra: target, chats: list.length, comTelefone: matched });
-        }
+        }));
       }
       const { data: leadRows } = await sb.from('leads').select('id,name,phone,whatsapp,status').eq('clinic_id', clinicId).limit(5000);
       const moves: Record<string, string[]> = {};
