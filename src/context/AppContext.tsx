@@ -37,6 +37,8 @@ interface AppContextType {
   clinics: Clinic[];
   addClinic: (clinicData: Omit<Clinic, 'id' | 'createdAt'>, clientUser?: { name: string; email: string; password?: string; role?: Role }) => Clinic;
   updateClinic: (id: string, updates: Partial<Clinic>) => void;
+  /** Cria a clínica e espera o banco confirmar (null se não gravou): usado pelo assistente de cadastro */
+  createClinic: (clinicData: Omit<Clinic, 'id' | 'createdAt'>) => Promise<Clinic | null>;
   deleteClinic: (id: string) => void;
   switchUserRole: (role: Role, clinicId?: string) => void;
   currentClinicId: string;
@@ -224,6 +226,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     addToast(`Cliente/Unidade "${newClinic.name}" cadastrado com sucesso!`, 'success');
+    return newClinic;
+  }, [clinics, addToast]);
+
+  const createClinic = useCallback(async (clinicData: Omit<Clinic, 'id' | 'createdAt'>): Promise<Clinic | null> => {
+    const newId = isSupabaseConfigured() ? newUuid() : String(Date.now());
+    const initials = clinicData.name.substring(0, 2).toUpperCase();
+    const newClinic: Clinic = {
+      ...clinicData,
+      id: newId,
+      logo: clinicData.logo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(initials)}&backgroundColor=0284c7`,
+      createdAt: new Date().toISOString(),
+      enabledModules: clinicData.enabledModules && clinicData.enabledModules.length > 0 ? clinicData.enabledModules : ['dashboard', 'crm', 'patients', 'appointments', 'followups', 'tasks', 'reports']
+    };
+    const ok = await insertClinicInDb(newClinic);
+    if (!ok) { addToast(`Não foi possível salvar "${newClinic.name}" no banco de dados.`, 'error'); return null; }
+    saveClinicsToStorage([...clinics, newClinic]);
     return newClinic;
   }, [clinics, addToast]);
 
@@ -587,7 +605,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       theme, toggleTheme, toasts, addToast, removeToast,
       supabase: getSupabase(),
       leads, refreshLeads, addLead,
-      user, login, logout, clinics, addClinic, updateClinic, deleteClinic, switchUserRole,
+      user, login, logout, clinics, addClinic, updateClinic, createClinic, deleteClinic, switchUserRole,
       messagingTarget, openMessaging, clearMessagingTarget,
       currentClinicId, setCurrentClinicId, currentClinic, isAllClinicsView, isClientOnlyMode,
       hasPermission,

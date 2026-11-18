@@ -15,6 +15,7 @@ import ClinicorpConfigPanel from './ClinicorpConfigPanel';
 import SupabaseConfigPanel from './SupabaseConfigPanel';
 import AgentUsagePanel from './AgentUsagePanel';
 import AgentSetupPanel from './AgentSetupPanel';
+import NewClinicModal from '../clinics/NewClinicModal';
 
 type View = 'hub' | 'clinicorp' | 'google' | 'supabase' | 'simples_dental' | 'agent' | 'agent_setup';
 type GoogleTab = 'settings' | 'mapping' | 'history';
@@ -47,6 +48,7 @@ interface ClinicStatus { lastSync: string | null; appointments: number; whatsapp
 export default function IntegrationsWorkspace() {
   const { currentClinic, clinics, isAllClinicsView, setActiveTab } = useApp();
   const [view, setView] = useState<View>('hub');
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [googleTab, setGoogleTab] = useState<GoogleTab>('settings');
   const [loading, setLoading] = useState(true);
   const [byClinic, setByClinic] = useState<Record<string, ClinicStatus>>({});
@@ -103,6 +105,14 @@ export default function IntegrationsWorkspace() {
 
     return [
       {
+        id: 'new-clinic', name: 'Cadastrar clínica nova', group: 'Clínicas',
+        description: 'Em uma só tela: dados da clínica, conexão com o Clinicorp e agente de WhatsApp com QR code.',
+        tone: 'off', badge: 'Assistente',
+        facts: ['Cada etapa pode ser pulada e retomada depois aqui em Integrações'],
+        icon: <Building2 size={22} />, accent: 'bg-blue-600',
+        action: { label: 'Cadastrar clínica', onClick: () => setWizardOpen(true) }
+      },
+      {
         id: 'clinicorp', name: 'Clinicorp', group: 'Sistema da clínica',
         description: 'Agenda, pacientes, profissionais, status e etiquetas: a fonte oficial dos atendimentos.',
         tone: !lastSync ? 'off' : syncAgeH! > 48 ? 'warn' : 'ok',
@@ -128,7 +138,7 @@ export default function IntegrationsWorkspace() {
         action: { label: 'Abrir Chat', onClick: () => setActiveTab('mensageria') }
       },
       {
-        id: 'agent-setup', name: 'Agente de WhatsApp (clínica nova)', group: 'Chat',
+        id: 'agent-setup', name: 'Agente de WhatsApp (clínica existente)', group: 'Chat',
         description: 'Cria o agente e a sessão de WhatsApp de uma clínica nova e mostra o QR code para conectar.',
         tone: 'off', badge: 'Implantação',
         facts: ['O n8n duplica o agente padrão para a clínica; a cópia nasce inativa'],
@@ -209,6 +219,7 @@ export default function IntegrationsWorkspace() {
 
   return (
     <div className="space-y-6 max-w-6xl">
+      <NewClinicModal isOpen={wizardOpen} onClose={() => { setWizardOpen(false); load(); }} />
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-black tracking-tight text-[var(--color-text-primary)]">Integrações</h1>

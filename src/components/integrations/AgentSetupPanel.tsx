@@ -10,10 +10,10 @@ const STATUS_TEXT: Record<string, string> = {
   WORKING: 'Conectada', FAILED: 'Falhou', NOT_FOUND: 'Sessão ainda não existe no WAHA', UNKNOWN: 'Estado desconhecido'
 };
 
-export default function AgentSetupPanel() {
-  const { clinics, currentClinic, user, addToast } = useApp();
+/** Implantação do agente de uma clínica (sem seletor de clínica): usado no assistente de cadastro e na tela de integrações. */
+export function AgentSetupBody({ clinicId, onDone }: { clinicId: string; onDone?: () => void }) {
+  const { clinics, user, addToast } = useApp();
   const isSuper = user?.role === Role.SUPER_ADMIN;
-  const [clinicId, setClinicId] = useState(currentClinic?.id || clinics[0]?.id || '');
   const [setups, setSetups] = useState<Record<string, AgentInfo>>({});
   const [openaiKey, setOpenaiKey] = useState('');
   const [org, setOrg] = useState('');
@@ -52,6 +52,7 @@ export default function AgentSetupPanel() {
     if (!r.ok) { addToast(r.message || 'Não foi possível implantar o agente.', 'error'); return; }
     addToast('Agente criado. Agora leia o QR code com o WhatsApp da clínica.', 'success');
     setSetups(await fetchAgentSetups());
+    onDone?.();
   };
   const start = async () => {
     setBusy(true);
@@ -64,19 +65,8 @@ export default function AgentSetupPanel() {
   const field = 'w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white';
 
   return (
-    <div className="space-y-5 max-w-3xl">
-      <p className="text-xs text-slate-500 dark:text-slate-400">
-        Cria o agente de WhatsApp de uma clínica nova: o n8n duplica o agente padrão para ela e cria a sessão do WhatsApp. A cópia nasce <strong>inativa</strong> e sem ligação com o CRM; depois de ler o QR code, o CRM é conectado e só então o agente é ativado.
-      </p>
-
-      <div className="flex items-center gap-3">
-        <label className="flex items-center gap-2 text-xs font-bold text-slate-500 dark:text-slate-400"><Building2 size={14} />Clínica</label>
-        <select value={clinicId} onChange={e => setClinicId(e.target.value)} className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-bold dark:text-white outline-none cursor-pointer">
-          {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        {info && <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"><CheckCircle2 size={13} />Agente implantado</span>}
-      </div>
-
+    <div className="space-y-4">
+      {info && <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"><CheckCircle2 size={13} />Agente implantado</span>}
       {!info ? (
         <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-4">
           {!isSuper && <p className="flex items-start gap-2 text-xs font-semibold text-amber-700 dark:text-amber-300"><ShieldAlert size={14} className="mt-0.5 shrink-0" />Só o administrador geral pode implantar um agente.</p>}
@@ -120,6 +110,26 @@ export default function AgentSetupPanel() {
           {status?.status === 'WORKING' && <p className="text-xs font-semibold text-emerald-600">WhatsApp conectado. O Chat desta clínica já mostra as conversas. Falta ligar a cópia do agente ao CRM e ativá-la no n8n.</p>}
         </section>
       )}
+    </div>
+  );
+}
+
+/** Tela completa (Integrações): escolhe a clínica e mostra a implantação do agente. */
+export default function AgentSetupPanel() {
+  const { clinics, currentClinic } = useApp();
+  const [clinicId, setClinicId] = useState(currentClinic?.id || clinics[0]?.id || '');
+  return (
+    <div className="space-y-5 max-w-3xl">
+      <p className="text-xs text-slate-500 dark:text-slate-400">
+        Cria o agente de WhatsApp de uma clínica nova: o n8n duplica o agente padrão para ela e cria a sessão do WhatsApp. A cópia nasce <strong>inativa</strong> e sem ligação com o CRM; depois de ler o QR code, o CRM é conectado e só então o agente é ativado.
+      </p>
+      <div className="flex items-center gap-3">
+        <label className="flex items-center gap-2 text-xs font-bold text-slate-500 dark:text-slate-400"><Building2 size={14} />Clínica</label>
+        <select value={clinicId} onChange={e => setClinicId(e.target.value)} className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-bold dark:text-white outline-none cursor-pointer">
+          {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </div>
+      {clinicId && <AgentSetupBody key={clinicId} clinicId={clinicId} />}
     </div>
   );
 }
