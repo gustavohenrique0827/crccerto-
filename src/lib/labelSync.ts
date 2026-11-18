@@ -10,6 +10,7 @@ export function useAutoLabelSync(clinicId: string, onChanged?: () => void) {
     let cancelled = false;
     const key = `crm_labels_sync:${clinicId}`;
     const run = async () => {
+      if (document.hidden || navigator.onLine === false) return;
       try {
         const last = Number(localStorage.getItem(key) || 0);
         if (Date.now() - last < EVERY_MS) return;
@@ -20,11 +21,12 @@ export function useAutoLabelSync(clinicId: string, onChanged?: () => void) {
         const { data } = (await sb?.auth.getSession()) || { data: { session: null } };
         const token = data.session?.access_token;
         if (!token) return;
-        const res = await fetch('/api/whatsapp/live', {
+        const send = () => fetch('/api/whatsapp/live', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ action: 'labels_sync', clinicId, apply: true })
         });
+        const res = await send().catch(async () => { await new Promise(r => setTimeout(r, 1500)); return send(); });
         const j = await res.json().catch(() => null);
         if (!cancelled && j?.ok && j.aplicado && j.leadsAfetados > 0) onChanged?.();
       } catch { /* silencioso: tenta de novo no próximo ciclo */ }

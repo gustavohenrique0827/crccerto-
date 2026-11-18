@@ -19,12 +19,15 @@ async function call<T>(body: Record<string, unknown>, pick: (j: any) => T, empty
   const { data } = (await sb?.auth.getSession()) || { data: { session: null } };
   const token = data.session?.access_token;
   if (!token) return { ok: false, source: 'none', reason: 'Sem sessão.', data: empty };
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return { ok: false, source: 'none', reason: 'Sem internet.', data: empty };
   try {
-    const res = await fetch('/api/whatsapp/live', {
+    // Troca de rede (Wi-Fi/4G) derruba a chamada com ERR_NETWORK_CHANGED: tenta de novo uma vez
+    const send = () => fetch('/api/whatsapp/live', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(body)
     });
+    const res = await send().catch(async () => { await new Promise(r => setTimeout(r, 1500)); return send(); });
     const j = await res.json().catch(() => null);
     if (!j) return { ok: false, source: 'none', reason: `O servidor respondeu ${res.status}.`, data: empty };
     if (j.ok === false) return { ok: false, source: 'none', reason: j.message, data: empty };
