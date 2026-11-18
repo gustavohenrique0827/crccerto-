@@ -67,6 +67,20 @@ async function wahaPost(path: string, payload: unknown, ms = 15000): Promise<{ o
   }
 }
 
+async function wahaRaw(path: string, ms = 10000): Promise<{ status: number; json: any }> {
+  const base = env('WAHA_URL').replace(/\/$/, '');
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const r = await fetch(`${base}${path}`, { headers: { 'X-Api-Key': env('WAHA_API_KEY') }, signal: ctrl.signal });
+    return { status: r.status, json: await r.json().catch(() => null) };
+  } catch {
+    return { status: 0, json: null };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 const mediaLabel = (m: any) => {
   const mime = String(m?.media?.mimetype || m?._data?.mimetype || m?.type || '');
   if (/image/i.test(mime)) return '📷 Imagem';
@@ -185,6 +199,35 @@ export default async function handler(req: Req, res: Res) {
       const r = await wahaPost('/api/sendText', { session, chatId, text });
       if (!r.ok) return fail(res, 502, r.status === 0 ? 'O WAHA não respondeu. Tente de novo em instantes.' : `O WhatsApp recusou o envio (${r.status}). Verifique se a sessão está conectada.`);
       return res.status(200).json({ ok: true, source: 'waha', chatId, session });
+    }
+
+    if (body.action === 'diagnose') {
+      // Só leitura: mostra se o WAHA devolve etiquetas e quais contatos têm nome salvo
+      const out: any[] = [];
+      for (const session of sessions) {
+        const sess = encodeURIComponent(session);
+        const labels = await wahaRaw(`/api/${sess}/labels`);
+        const contacts = await wahaRaw(`/api/contacts/all?session=${sess}&limit=300`);
+        const list: any[] = Array.isArray(contacts.json) ? contacts.json : [];
+        const people = list.filter(c => String(c?.id || '').endsWith('@c.us'));
+        const saved = people.filter(c => String(c?.name || '').trim());
+        let chatLabels: any = null;
+        const sample = saved[0] || people[0];
+        if (sample) chatLabels = (await wahaRaw(`/api/${sess}/labels/chats/${encodeURIComponent(sample.id)}`)).status;
+        out.push({
+          session,
+          labels: { status: labels.status, items: Array.isArray(labels.json) ? labels.json.map((l: any) => ({ id: l.id, name: l.name })).slice(0, 30) : null, error: labels.status === 200 ? null : (labels.json?.message || labels.json?.error || null) },
+          contacts: {
+            status: contacts.status,
+            total: people.length,
+            withSavedName: saved.length,
+            fieldsSeen: sample ? Object.keys(sample).slice(0, 20) : [],
+            sample: people.slice(0, 5).map(c => ({ id: String(c.id).replace(/\d(?=\d{4})/g, '•'), name: c.name || null, pushname: c.pushname || null, isMyContact: c.isMyContact ?? null }))
+          },
+          chatLabelsStatus: chatLabels
+        });
+      }
+      return res.status(200).json({ ok: true, source: 'waha', sessions: out });
     }
 
     if (body.action === 'messages') {
