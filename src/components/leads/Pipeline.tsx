@@ -152,6 +152,7 @@ export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'al
     [LeadStatus.SOLD]: { targetCount: 3, targetValue: 30000 },
     [LeadStatus.MISSED]: { targetCount: 1, targetValue: 5000 },
     [LeadStatus.DISQUALIFIED]: { targetCount: 2, targetValue: 0 },
+    [LeadStatus.PATIENT]: { targetCount: 0, targetValue: 0 },
   });
 
   const handleUpdateGoal = (stageId: LeadStatus, newGoal: StageGoal) => {

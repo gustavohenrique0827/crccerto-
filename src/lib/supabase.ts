@@ -83,7 +83,8 @@ const STATUS_FROM_DB: Record<string, LeadStatus> = {
   vendido: LeadStatus.SOLD,
   comprou: LeadStatus.SOLD,
   perdido: LeadStatus.DISQUALIFIED,
-  desqualificado: LeadStatus.DISQUALIFIED
+  desqualificado: LeadStatus.DISQUALIFIED,
+  paciente: LeadStatus.PATIENT
 };
 
 const ORIGIN_LABEL: Record<string, string> = {

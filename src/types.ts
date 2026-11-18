@@ -12,7 +12,8 @@ export enum LeadStatus {
   ATTENDED = 'compareceu',
   SOLD = 'vendido',
   MISSED = 'faltou',
-  DISQUALIFIED = 'desqualificado'
+  DISQUALIFIED = 'desqualificado',
+  PATIENT = 'paciente'
 }
 
 export enum AppointmentStatus {
