@@ -33,6 +33,7 @@ interface Card {
   icon: React.ReactNode;
   accent: string; // cor do ícone
   action: { label: string; onClick: () => void };
+  secondary?: { label: string; onClick: () => void };
 }
 
 const TONE_STYLE: Record<Tone, string> = {
@@ -127,7 +128,7 @@ export default function IntegrationsWorkspace() {
       },
       {
         id: 'whatsapp', name: 'WhatsApp (agente n8n + WAHA)', group: 'Chat',
-        description: 'O agente atende os contatos no WhatsApp e grava cada conversa e lead no sistema.',
+        description: 'O agente atende os contatos no WhatsApp e grava cada conversa e lead no sistema. Aqui você também implanta o agente de uma clínica nova (QR code) e aplica as etiquetas do WhatsApp no funil.',
         tone: wa.length === 0 ? 'off' : waActive ? 'ok' : 'warn',
         badge: wa.length === 0 ? 'Sem sessão cadastrada' : waActive ? 'Ativo' : 'Sessão pausada',
         facts: [
@@ -136,15 +137,8 @@ export default function IntegrationsWorkspace() {
           ...(lastMsgAt ? [`Última mensagem: ${fmtDateTime(lastMsgAt)}`] : [])
         ],
         icon: <MessageCircle size={22} />, accent: 'bg-emerald-500',
-        action: { label: 'Abrir Chat', onClick: () => setActiveTab('mensageria') }
-      },
-      {
-        id: 'agent-setup', name: 'Agente de WhatsApp (clínica existente)', group: 'Chat',
-        description: 'Cria o agente e a sessão de WhatsApp de uma clínica nova e mostra o QR code para conectar.',
-        tone: 'off', badge: 'Implantação',
-        facts: ['O n8n duplica o agente padrão para a clínica; a cópia nasce inativa'],
-        icon: <Bot size={22} />, accent: 'bg-indigo-500',
-        action: { label: 'Implantar agente', onClick: () => setView('agent_setup') }
+        action: { label: 'Configurar e implantar', onClick: () => setView('agent_setup') },
+        secondary: { label: 'Abrir Chat', onClick: () => setActiveTab('mensageria') }
       },
       {
         id: 'agent-usage', name: 'Consumo do agente (estimado)', group: 'Chat',
@@ -197,7 +191,7 @@ export default function IntegrationsWorkspace() {
   );
 
   if (view === 'clinicorp') return <div><Back title="Clinicorp" /><ClinicorpConfigPanel onBack={() => { setView('hub'); load(); }} /></div>;
-  if (view === 'agent_setup') return <div><Back title="Agente de WhatsApp" /><AgentSetupPanel /><WahaDiagnostic /></div>;
+  if (view === 'agent_setup') return <div><Back title="WhatsApp e agente" /><AgentSetupPanel /><WahaDiagnostic /></div>;
   if (view === 'agent') return <div><Back title="Consumo do agente" /><AgentUsagePanel /></div>;
   if (view === 'supabase') return <div><Back title="Banco de dados" /><SupabaseConfigPanel onBack={() => setView('hub')} /></div>;
   if (view === 'simples_dental') return <div><Back title="Simples Dental" /><SimplesDentalConfigPanel onBack={() => setView('hub')} /></div>;
@@ -256,10 +250,15 @@ export default function IntegrationsWorkspace() {
                 <ul className="space-y-1 text-xs text-slate-600 dark:text-slate-300 pl-[60px]">
                   {c.facts.map(f => <li key={f}>{f}</li>)}
                 </ul>
-                <div className="pl-[60px]">
+                <div className="pl-[60px] flex flex-wrap items-center gap-2">
                   <button onClick={c.action.onClick} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold cursor-pointer">
                     {c.action.label} <ArrowRight size={14} />
                   </button>
+                  {c.secondary && (
+                    <button onClick={c.secondary.onClick} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer">
+                      {c.secondary.label}
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
