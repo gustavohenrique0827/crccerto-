@@ -230,6 +230,79 @@ export default async function handler(req: Req, res: Res) {
       return res.status(200).json({ ok: true, source: 'waha', sessions: out });
     }
 
+    if (body.action === 'labels_sync') {
+      // Lê as etiquetas do WhatsApp (WAHA) e coloca cada lead na etapa certa. apply=false só mostra o que mudaria.
+      const apply = body.apply === true;
+      const norm = (v: string) => v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const ruleFor = (name: string): string | null => {
+        const n = norm(name);
+        if (n.includes('paciente')) return 'paciente';
+        if (n.includes('nao veio')) return 'faltou';
+        if (n.includes('avaliacao feita')) return 'compareceu';
+        if (n.includes('avaliacao agendada')) return 'agendamento';
+        if (n.includes('follow') || n.includes('retornar contato')) return '2_contato';
+        return null;
+      };
+      const PRIORITY = ['paciente', 'faltou', 'compareceu', 'agendamento', '2_contato'];
+      const EARLY = new Set(['novo', 'contatado', '1_contato', '2_contato', '3_contato', 'interagiu', 'agendou']);
+      const LOCKED = new Set(['vendido', 'comprou', 'desqualificado', 'perdido', 'paciente']);
+      const forStatus = new Map<string, Set<string>>(); // chave do telefone -> estados sugeridos
+      const perLabel: any[] = [];
+      let unresolved = 0;
+      for (const session of sessions) {
+        const sess = encodeURIComponent(session);
+        const labels = await waha(`/api/${sess}/labels`);
+        if (!Array.isArray(labels)) continue;
+        for (const l of labels) {
+          const target = ruleFor(String(l.name || ''));
+          if (!target) { perLabel.push({ label: l.name, regra: 'ignorada', chats: 0 }); continue; }
+          const chats = await waha(`/api/${sess}/labels/${encodeURIComponent(String(l.id))}/chats`, 15000);
+          const list: any[] = Array.isArray(chats) ? chats : [];
+          let matched = 0;
+          for (const c of list) {
+            let id = String(c?.id?._serialized || c?.id || '');
+            if (id.endsWith('@g.us')) continue;
+            if (id.endsWith('@lid')) {
+              const r = await waha(`/api/${sess}/lids/${encodeURIComponent(id)}`);
+              const pn = String(r?.pn || '');
+              if (!pn) { unresolved++; continue; }
+              id = pn;
+            }
+            const k = key8(id.split('@')[0]);
+            if (!k) continue;
+            matched++;
+            if (!forStatus.has(k)) forStatus.set(k, new Set());
+            forStatus.get(k)!.add(target);
+          }
+          perLabel.push({ label: l.name, regra: target, chats: list.length, comTelefone: matched });
+        }
+      }
+      const { data: leadRows } = await sb.from('leads').select('id,name,phone,whatsapp,status').eq('clinic_id', clinicId).limit(5000);
+      const moves: Record<string, string[]> = {};
+      let touched = 0;
+      for (const l of leadRows || []) {
+        const ks = [key8(l.whatsapp), key8(l.phone)].filter(Boolean);
+        const sug = new Set<string>();
+        ks.forEach(k => forStatus.get(k)?.forEach(x => sug.add(x)));
+        if (sug.size === 0) continue;
+        const target = PRIORITY.find(x => sug.has(x))!;
+        const cur = String(l.status);
+        if (LOCKED.has(cur) || cur === target) continue;
+        if (target !== 'paciente' && !EARLY.has(cur) && cur !== 'faltou') continue;
+        (moves[target] ||= []).push(l.id);
+        touched++;
+      }
+      if (apply) {
+        for (const [st, ids] of Object.entries(moves)) {
+          for (let i = 0; i < ids.length; i += 200) {
+            const { error } = await sb.from('leads').update({ status: st }).in('id', ids.slice(i, i + 200));
+            if (error) return fail(res, 500, error.message.includes('invalid input value for enum') ? 'A etapa "Paciente" ainda não existe no banco. Rode o SQL: ALTER TYPE lead_status ADD VALUE IF NOT EXISTS \'paciente\';' : error.message);
+          }
+        }
+      }
+      return res.status(200).json({ ok: true, source: 'waha', aplicado: apply, leadsAfetados: touched, porEtapa: Object.fromEntries(Object.entries(moves).map(([k, v]) => [k, v.length])), porEtiqueta: perLabel, semTelefoneResolvido: unresolved });
+    }
+
     if (body.action === 'messages') {
       let chatIds: string[] = [];
       let useSessions = sessions;

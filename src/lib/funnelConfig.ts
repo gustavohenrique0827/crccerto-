@@ -13,7 +13,8 @@ export const DEFAULT_STAGES: { id: LeadStatus; label: string; cssVar: string }[]
   { id: LeadStatus.ATTENDED, label: 'Compareceu', cssVar: '--stage-6' },
   { id: LeadStatus.SOLD, label: 'Comprou', cssVar: '--stage-7' },
   { id: LeadStatus.MISSED, label: 'Faltou', cssVar: '--stage-lost' },
-  { id: LeadStatus.DISQUALIFIED, label: 'Desqualificado', cssVar: '--stage-void' }
+  { id: LeadStatus.DISQUALIFIED, label: 'Desqualificado', cssVar: '--stage-void' },
+  { id: LeadStatus.PATIENT, label: 'Paciente', cssVar: '--stage-patient' }
 ];
 
 export type FunnelOverrides = Partial<Record<LeadStatus, { label?: string; color?: string }>>;

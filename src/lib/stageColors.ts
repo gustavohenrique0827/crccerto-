@@ -15,7 +15,8 @@ export const STAGE_VAR: Record<LeadStatus, string> = {
   [LeadStatus.ATTENDED]: 'var(--stage-6)',
   [LeadStatus.SOLD]: 'var(--stage-7)',
   [LeadStatus.MISSED]: 'var(--stage-lost)',
-  [LeadStatus.DISQUALIFIED]: 'var(--stage-void)'
+  [LeadStatus.DISQUALIFIED]: 'var(--stage-void)',
+  [LeadStatus.PATIENT]: 'var(--stage-patient)'
 };
 
 export const stageBgClass = (status: LeadStatus) => `bg-[${STAGE_VAR[status]}]`;
