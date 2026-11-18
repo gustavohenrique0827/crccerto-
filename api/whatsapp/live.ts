@@ -292,15 +292,16 @@ export default async function handler(req: Req, res: Res) {
         (moves[target] ||= []).push(l.id);
         touched++;
       }
+      const erros: string[] = [];
       if (apply) {
         for (const [st, ids] of Object.entries(moves)) {
           for (let i = 0; i < ids.length; i += 200) {
             const { error } = await sb.from('leads').update({ status: st }).in('id', ids.slice(i, i + 200));
-            if (error) return fail(res, 500, error.message.includes('invalid input value for enum') ? 'A etapa "Paciente" ainda não existe no banco. Rode o SQL: ALTER TYPE lead_status ADD VALUE IF NOT EXISTS \'paciente\';' : error.message);
+            if (error) { erros.push(error.message.includes('invalid input value for enum') ? 'A etapa "Paciente" ainda não existe no banco. Rode no Supabase: ALTER TYPE lead_status ADD VALUE IF NOT EXISTS \'paciente\';' : error.message); break; }
           }
         }
       }
-      return res.status(200).json({ ok: true, source: 'waha', aplicado: apply, leadsAfetados: touched, porEtapa: Object.fromEntries(Object.entries(moves).map(([k, v]) => [k, v.length])), porEtiqueta: perLabel, semTelefoneResolvido: unresolved });
+      return res.status(200).json({ ok: true, source: 'waha', aplicado: apply, leadsAfetados: touched, porEtapa: Object.fromEntries(Object.entries(moves).map(([k, v]) => [k, v.length])), porEtiqueta: perLabel, semTelefoneResolvido: unresolved, erros });
     }
 
     if (body.action === 'messages') {

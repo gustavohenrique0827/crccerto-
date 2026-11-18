@@ -1,3 +1,4 @@
+import { useAutoLabelSync } from '../../lib/labelSync';
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Columns, 
@@ -103,7 +104,8 @@ interface PipelineProps {
 }
 
 export default function Pipeline({ globalSearchTerm = '', selectedClinicId = 'all', onLeadClick }: PipelineProps) {
-  const { addToast } = useApp();
+  const { addToast, refreshLeads, currentClinic } = useApp();
+  useAutoLabelSync(selectedClinicId && selectedClinicId !== 'all' ? selectedClinicId : (currentClinic?.id || ''), refreshLeads);
   const funnelVersion = useFunnel();
   const [stages, setStages] = useState(buildStages);
   useEffect(() => { setStages(buildStages()); }, [funnelVersion]);

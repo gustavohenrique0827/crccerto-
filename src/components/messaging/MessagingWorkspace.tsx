@@ -1,3 +1,4 @@
+import { useAutoLabelSync } from '../../lib/labelSync';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Download, FileText as FileIcon, Loader2, Play,
@@ -96,7 +97,7 @@ function MediaView({ media, clinicId, mine }: { media: NonNullable<ConversationR
 }
 
 export default function MessagingWorkspace() {
-  const { currentClinicId, currentClinic, clinics, user, addToast, messagingTarget, clearMessagingTarget } = useApp();
+  const { currentClinicId, currentClinic, clinics, user, addToast, messagingTarget, clearMessagingTarget, refreshLeads } = useApp();
   useFunnel();
   const { leads, loading: leadsLoading } = useSupabaseLeads(currentClinicId);
   const [rows, setRows] = useState<ConversationRow[]>([]);
@@ -153,6 +154,7 @@ export default function MessagingWorkspace() {
 
   // Conversas lidas direto do WAHA (como no SPY): não dependem do n8n nem do banco
   const liveClinicId = currentClinic?.id || (currentClinicId && currentClinicId !== 'all' ? currentClinicId : '') || clinics[0]?.id || '';
+  useAutoLabelSync(liveClinicId, refreshLeads);
   const [liveChats, setLiveChats] = useState<LiveChat[]>([]);
   const [liveState, setLiveState] = useState<{ ok: boolean; reason?: string }>({ ok: false });
   useEffect(() => {
