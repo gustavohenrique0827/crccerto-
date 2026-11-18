@@ -87,6 +87,9 @@ export default async function handler(req: Req, res: Res) {
   // Sessões do WAHA desta clínica (cada sessão é um número de WhatsApp)
   const { data: tenants } = await sb.from('waha_tenants').select('waha_session,ativo').eq('clinic_id', clinicId);
   const sessions: string[] = (tenants || []).filter((t: any) => t.ativo !== false && t.waha_session).map((t: any) => t.waha_session);
+  // Sessão do agente implantado pelo painel (clínica nova): também aparece no Chat
+  const { data: agentRow } = await sb.from('clinic_integrations').select('subscriber_id').eq('clinic_id', clinicId).eq('provider', 'agent').maybeSingle();
+  if (agentRow?.subscriber_id && !sessions.includes(agentRow.subscriber_id)) sessions.push(agentRow.subscriber_id);
   if (sessions.length === 0) return res.status(200).json({ ok: true, source: 'none', reason: 'Esta clínica não tem sessão de WhatsApp cadastrada.' });
 
   try {

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, ArrowLeft, ArrowRight, Building2, Calendar, CheckCircle2, Database, MessageCircle, PlugZap, RefreshCw, Stethoscope, Zap
+  AlertTriangle, ArrowLeft, ArrowRight, Building2, Calendar, CheckCircle2, Database, MessageCircle, PlugZap, RefreshCw, Stethoscope, Zap, Bot
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useApp } from '../../context/AppContext';
@@ -14,8 +14,9 @@ import SimplesDentalConfigPanel from './SimplesDentalConfigPanel';
 import ClinicorpConfigPanel from './ClinicorpConfigPanel';
 import SupabaseConfigPanel from './SupabaseConfigPanel';
 import AgentUsagePanel from './AgentUsagePanel';
+import AgentSetupPanel from './AgentSetupPanel';
 
-type View = 'hub' | 'clinicorp' | 'google' | 'supabase' | 'simples_dental' | 'agent';
+type View = 'hub' | 'clinicorp' | 'google' | 'supabase' | 'simples_dental' | 'agent' | 'agent_setup';
 type GoogleTab = 'settings' | 'mapping' | 'history';
 type Tone = 'ok' | 'warn' | 'off';
 
@@ -127,6 +128,14 @@ export default function IntegrationsWorkspace() {
         action: { label: 'Abrir Chat', onClick: () => setActiveTab('mensageria') }
       },
       {
+        id: 'agent-setup', name: 'Agente de WhatsApp (clínica nova)', group: 'Chat',
+        description: 'Cria o agente e a sessão de WhatsApp de uma clínica nova e mostra o QR code para conectar.',
+        tone: 'off', badge: 'Implantação',
+        facts: ['O n8n duplica o agente padrão para a clínica; a cópia nasce inativa'],
+        icon: <Bot size={22} />, accent: 'bg-indigo-500',
+        action: { label: 'Implantar agente', onClick: () => setView('agent_setup') }
+      },
+      {
         id: 'agent-usage', name: 'Consumo do agente (estimado)', group: 'Chat',
         description: 'Quanto o agente de WhatsApp consome por clínica no mês, com limite e aviso quando chegar perto.',
         tone: 'off', badge: 'Estimativa',
@@ -177,6 +186,7 @@ export default function IntegrationsWorkspace() {
   );
 
   if (view === 'clinicorp') return <div><Back title="Clinicorp" /><ClinicorpConfigPanel onBack={() => { setView('hub'); load(); }} /></div>;
+  if (view === 'agent_setup') return <div><Back title="Agente de WhatsApp" /><AgentSetupPanel /></div>;
   if (view === 'agent') return <div><Back title="Consumo do agente" /><AgentUsagePanel /></div>;
   if (view === 'supabase') return <div><Back title="Banco de dados" /><SupabaseConfigPanel onBack={() => setView('hub')} /></div>;
   if (view === 'simples_dental') return <div><Back title="Simples Dental" /><SimplesDentalConfigPanel onBack={() => setView('hub')} /></div>;
