@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, 
@@ -284,7 +285,7 @@ export default function NewLeadModal({ isOpen, onClose, onAddLead }: NewLeadModa
 
   if (!isOpen) return null;
 
-  return (
+  return createPortal(
     <AnimatePresence>
       <div className="fixed inset-0 z-[999] flex items-center justify-center p-3 sm:p-4">
         {/* Backdrop */}
@@ -838,5 +839,5 @@ export default function NewLeadModal({ isOpen, onClose, onAddLead }: NewLeadModa
         </motion.div>
       </div>
     </AnimatePresence>
-  );
+  , document.body);
 }
