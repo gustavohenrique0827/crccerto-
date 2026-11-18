@@ -8,7 +8,7 @@ import { cn } from '../../lib/utils';
 import { Lead, LeadStatus } from '../../types';
 import { leadDisplayName } from '../../lib/leadName';
 import { stageLabel, useFunnel } from '../../lib/funnelConfig';
-import { LiveChat, LiveMessage, fetchLiveChats, fetchLiveMedia, fetchLiveMessages } from '../../lib/wahaLive';
+import { LiveChat, LiveMessage, fetchLiveChats, fetchLiveMedia, fetchLiveMessages, sendLiveMessage } from '../../lib/wahaLive';
 import LeadDetail from '../leads/LeadDetail';
 import {
   ConversationRow, addLeadNote, getSupabase, addOutgoingMessage, fetchConversationRows, formatPhoneBR, isSupabaseConfigured, localDay, phoneKey, useSupabaseLeads
@@ -54,13 +54,6 @@ const dayLabel = (iso: string) => {
   if (that === localDay(new Date(Date.now() - 86400000).toISOString())) return 'Ontem';
   return d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
 };
-const waLink = (phone: string, text?: string) => {
-  const digits = (phone || '').replace(/\D/g, '');
-  if (!digits) return '';
-  const full = digits.length <= 11 ? `55${digits}` : digits;
-  return `https://wa.me/${full}${text ? `?text=${encodeURIComponent(text)}` : ''}`;
-};
-
 const mediaCache = new Map<string, string>(); // id da mensagem -> endereço do arquivo já baixado
 
 /** Áudio, imagem, vídeo, figurinha e documento de uma mensagem do WhatsApp. Imagens abrem sozinhas; o resto, ao clicar. */
@@ -282,14 +275,20 @@ export default function MessagingWorkspace() {
   const sendViaWhatsapp = async () => {
     if (!selected || !draft.trim()) return;
     const phone = selected.lead.whatsapp || selected.lead.phone;
-    const url = waLink(phone, draft.trim());
-    if (!url) { addToast('Este contato não tem telefone cadastrado.', 'error'); return; }
+    if (!phone && !selected.chat) { addToast('Este contato não tem telefone cadastrado.', 'error'); return; }
+    if (!liveClinicId) { addToast('Selecione uma clínica para enviar mensagens.', 'error'); return; }
     setSending(true);
-    window.open(url, '_blank', 'noopener');
-    const ok = await addOutgoingMessage(selected.lead.id, draft, user?.id);
+    const isUuid = /^[0-9a-f-]{36}$/i.test(selected.lead.id);
+    const r = await sendLiveMessage(liveClinicId, {
+      text: draft.trim(),
+      ...(selected.chat ? { chatId: selected.chat.chatId, session: selected.chat.session } : { leadId: isUuid ? selected.lead.id : undefined, phone })
+    });
+    if (!r.ok) { setSending(false); addToast(r.error || 'Não foi possível enviar a mensagem.', 'error'); return; }
+    if (isUuid) await addOutgoingMessage(selected.lead.id, draft, user?.id);
     setSending(false);
-    if (ok) { setDraft(''); load(true); addToast('Mensagem aberta no WhatsApp e registrada no histórico.', 'success'); }
-    else addToast('WhatsApp aberto, mas não foi possível registrar no histórico.', 'warning');
+    setDraft('');
+    load(true);
+    addToast('Mensagem enviada pelo WhatsApp da clínica.', 'success');
   };
 
   const saveAsNote = async () => {
@@ -434,7 +433,7 @@ export default function MessagingWorkspace() {
                     onChange={e => setDraft(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendViaWhatsapp(); } }}
                     rows={3}
-                    placeholder="Escreva a resposta… (Ctrl+Enter abre no WhatsApp)"
+                    placeholder="Escreva a resposta… (Ctrl+Enter envia)"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white resize-none"
                   />
                 </div>
@@ -473,7 +472,7 @@ export default function MessagingWorkspace() {
                     <NotebookPen size={14} /> Salvar como anotação
                   </button>
                   <button onClick={sendViaWhatsapp} disabled={!draft.trim() || sending} className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold disabled:opacity-40 cursor-pointer">
-                    <Send size={14} /> Responder no WhatsApp
+                    <Send size={14} /> Enviar
                   </button>
                 </div>
               </div>

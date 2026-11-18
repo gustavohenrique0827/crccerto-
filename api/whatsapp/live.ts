@@ -53,6 +53,20 @@ async function waha(path: string, ms = 8000): Promise<any | null> {
   }
 }
 
+async function wahaPost(path: string, payload: unknown, ms = 15000): Promise<{ ok: boolean; status: number; json: any }> {
+  const base = env('WAHA_URL').replace(/\/$/, '');
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const r = await fetch(`${base}${path}`, { method: 'POST', headers: { 'X-Api-Key': env('WAHA_API_KEY'), 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: ctrl.signal });
+    return { ok: r.ok, status: r.status, json: await r.json().catch(() => null) };
+  } catch {
+    return { ok: false, status: 0, json: null };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 const mediaLabel = (m: any) => {
   const mime = String(m?.media?.mimetype || m?._data?.mimetype || m?.type || '');
   if (/image/i.test(mime)) return '📷 Imagem';
@@ -140,6 +154,37 @@ export default async function handler(req: Req, res: Res) {
       res.setHeader('Content-Type', String(full.media.mimetype || r.headers.get('content-type') || 'application/octet-stream').split(';')[0]);
       res.setHeader('Cache-Control', 'private, max-age=3600');
       return res.status(200).send(buf);
+    }
+
+    if (body.action === 'send') {
+      const text = String(body.text || '').trim();
+      if (!text) return fail(res, 400, 'Escreva a mensagem.');
+      let session = sessions[0];
+      let chatId = '';
+      if (body.chatId && body.session) {
+        if (!sessions.includes(String(body.session))) return fail(res, 403, 'Sessão não pertence a esta clínica.');
+        session = String(body.session);
+        chatId = String(body.chatId);
+      } else {
+        let phones: unknown[] = [body.phone];
+        if (body.leadId) {
+          const { data: lead } = await sb.from('leads').select('clinic_id,phone,whatsapp').eq('id', String(body.leadId)).maybeSingle();
+          if (!lead || lead.clinic_id !== clinicId) return fail(res, 404, 'Lead não encontrado nesta clínica.');
+          phones = [lead.whatsapp, lead.phone];
+        }
+        const nums = [...new Set(phones.flatMap(p => variants(p)))].slice(0, 4);
+        if (nums.length === 0) return fail(res, 400, 'Este contato não tem telefone cadastrado.');
+        // descobre qual variação do número (com ou sem o 9) existe no WhatsApp
+        let found = '';
+        for (const n of nums) {
+          const chk = await waha(`/api/contacts/check-exists?phone=${n}&session=${encodeURIComponent(session)}`);
+          if (chk?.numberExists) { found = String(chk.chatId || `${n}@c.us`); break; }
+        }
+        chatId = found || `${nums[0]}@c.us`;
+      }
+      const r = await wahaPost('/api/sendText', { session, chatId, text });
+      if (!r.ok) return fail(res, 502, r.status === 0 ? 'O WAHA não respondeu. Tente de novo em instantes.' : `O WhatsApp recusou o envio (${r.status}). Verifique se a sessão está conectada.`);
+      return res.status(200).json({ ok: true, source: 'waha', chatId, session });
     }
 
     if (body.action === 'messages') {

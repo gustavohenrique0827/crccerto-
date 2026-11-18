@@ -61,3 +61,9 @@ export async function fetchLiveMedia(clinicId: string, m: { session: string; cha
     return { error: e?.message || 'Sem conexão com o servidor.' };
   }
 }
+
+/** Envia a mensagem pelo WhatsApp da clínica (WAHA), sem sair do CRM. */
+export async function sendLiveMessage(clinicId: string, target: { leadId?: string; phone?: string; chatId?: string; session?: string; text: string }): Promise<{ ok: boolean; error?: string }> {
+  const r = await call<null>({ action: 'send', clinicId, ...target }, () => null, null);
+  return r.ok ? { ok: true } : { ok: false, error: r.reason || 'Não foi possível enviar.' };
+}
