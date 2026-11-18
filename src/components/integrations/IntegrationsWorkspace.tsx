@@ -15,6 +15,7 @@ import ClinicorpConfigPanel from './ClinicorpConfigPanel';
 import SupabaseConfigPanel from './SupabaseConfigPanel';
 import AgentUsagePanel from './AgentUsagePanel';
 import AgentSetupPanel from './AgentSetupPanel';
+import WahaDiagnostic from './WahaDiagnostic';
 import NewClinicModal from '../clinics/NewClinicModal';
 
 type View = 'hub' | 'clinicorp' | 'google' | 'supabase' | 'simples_dental' | 'agent' | 'agent_setup';
@@ -196,7 +197,7 @@ export default function IntegrationsWorkspace() {
   );
 
   if (view === 'clinicorp') return <div><Back title="Clinicorp" /><ClinicorpConfigPanel onBack={() => { setView('hub'); load(); }} /></div>;
-  if (view === 'agent_setup') return <div><Back title="Agente de WhatsApp" /><AgentSetupPanel /></div>;
+  if (view === 'agent_setup') return <div><Back title="Agente de WhatsApp" /><AgentSetupPanel /><WahaDiagnostic /></div>;
   if (view === 'agent') return <div><Back title="Consumo do agente" /><AgentUsagePanel /></div>;
   if (view === 'supabase') return <div><Back title="Banco de dados" /><SupabaseConfigPanel onBack={() => setView('hub')} /></div>;
   if (view === 'simples_dental') return <div><Back title="Simples Dental" /><SimplesDentalConfigPanel onBack={() => setView('hub')} /></div>;
