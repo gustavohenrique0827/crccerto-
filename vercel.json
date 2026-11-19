@@ -7,16 +7,6 @@
       "maxDuration": 60
     }
   },
-  "crons": [
-    {
-      "path": "/api/clinicorp/sync",
-      "schedule": "0 9 * * *"
-    },
-    {
-      "path": "/api/whatsapp/live",
-      "schedule": "0 8 * * *"
-    }
-  ],
   "headers": [
     {
       "source": "/version.json",
@@ -33,5 +23,17 @@
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
-  ]
+  ],
+  "schedules": {
+    "clinicorp-sync": {
+      "schedule": "0 9 * * *",
+      "path": "/api/clinicorp/sync",
+      "requestMethod": "GET"
+    },
+    "whatsapp-labels": {
+      "schedule": "*/15 * * * *",
+      "path": "/api/whatsapp/live",
+      "requestMethod": "GET"
+    }
+  }
 }
