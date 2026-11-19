@@ -197,6 +197,8 @@ export default async function handler(req: Req, res: Res) {
         results.push({ clinicId: cid, erro: e?.message || 'falhou' });
       }
     }
+    const resumo = results.map(r => r.erro ? `${r.clinicId}: ERRO ${r.erro}` : `${r.clinicId}: ${r.leadsAfetados} lead(s) movido(s) ${JSON.stringify(r.porEtapa || {})}${r.erros?.length ? ` | avisos: ${r.erros.join('; ')}` : ''}`);
+    console.log(`[etiquetas] ${new Date().toISOString()} ${results.length} clínica(s). ${resumo.join(' || ') || 'nenhuma clínica com sessão de WhatsApp'}`);
     return res.status(200).json({ ok: true, cron: true, clinicas: results });
   }
   if (req.method !== 'POST') return fail(res, 405, 'Use POST.');
