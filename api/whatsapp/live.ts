@@ -90,8 +90,87 @@ const mediaLabel = (m: any) => {
   return '📎 Arquivo';
 };
 
+/** Lê as etiquetas do WhatsApp (WAHA) e coloca cada lead na etapa certa. apply=false só mostra o que mudaria. */
+async function syncLabels(sb: any, clinicId: string, sessions: string[], apply: boolean) {
+  // Lê as etiquetas do WhatsApp (WAHA) e coloca cada lead na etapa certa. apply=false só mostra o que mudaria.
+  const norm = (v: string) => v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const ruleFor = (name: string): string | null => {
+    const n = norm(name);
+    if (n.includes('paciente')) return 'paciente';
+    if (n.includes('nao veio')) return 'faltou';
+    if (n.includes('avaliacao feita')) return 'compareceu';
+    if (n.includes('avaliacao agendada')) return 'agendamento';
+    if (n.includes('follow') || n.includes('retornar contato')) return '2_contato';
+    return null;
+  };
+  const PRIORITY = ['paciente', 'faltou', 'compareceu', 'agendamento', '2_contato'];
+  const EARLY = new Set(['novo', 'contatado', '1_contato', '2_contato', '3_contato', 'interagiu', 'agendou']);
+  const LOCKED = new Set(['vendido', 'comprou', 'desqualificado', 'perdido', 'paciente']);
+  const forStatus = new Map<string, Set<string>>(); // chave do telefone -> estados sugeridos
+  const perLabel: any[] = [];
+  let unresolved = 0;
+  let lidsLoaded = 0;
+  for (const session of sessions) {
+    const sess = encodeURIComponent(session);
+    const labels = await waha(`/api/${sess}/labels`);
+    if (!Array.isArray(labels)) continue;
+    // Mapa lid -> telefone de uma vez só (uma chamada em vez de uma por contato)
+    const lidMap = new Map<string, string>();
+    const lids = await waha(`/api/${sess}/lids?limit=5000`, 20000);
+    lidsLoaded += Array.isArray(lids) ? lids.length : 0;
+    if (Array.isArray(lids)) for (const x of lids) { if (x?.lid && x?.pn) lidMap.set(String(x.lid), String(x.pn)); }
+    await Promise.all(labels.map(async (l: any) => {
+      const target = ruleFor(String(l.name || ''));
+      if (!target) { perLabel.push({ label: l.name, regra: 'ignorada', chats: 0 }); return; }
+      const chatsRes = await wahaRaw(`/api/${sess}/labels/${encodeURIComponent(String(l.id))}/chats`, 20000);
+      const list: any[] = Array.isArray(chatsRes.json) ? chatsRes.json : [];
+      let matched = 0;
+      for (const c of list) {
+        let id = String(c?.id?._serialized || c?.id || '');
+        if (id.endsWith('@g.us')) continue;
+        if (id.endsWith('@lid')) {
+          const pn = lidMap.get(id) || '';
+          if (!pn) { unresolved++; continue; }
+          id = pn;
+        }
+        const k = key8(id.split('@')[0]);
+        if (!k) continue;
+        matched++;
+        if (!forStatus.has(k)) forStatus.set(k, new Set());
+        forStatus.get(k)!.add(target);
+      }
+      perLabel.push({ label: l.name, regra: target, httpStatus: chatsRes.status, chats: list.length, comTelefone: matched });
+    }));
+  }
+  const { data: leadRows } = await sb.from('leads').select('id,name,phone,whatsapp,status').eq('clinic_id', clinicId).limit(5000);
+  const moves: Record<string, string[]> = {};
+  let touched = 0;
+  for (const l of leadRows || []) {
+    const ks = [key8(l.whatsapp), key8(l.phone)].filter(Boolean);
+    const sug = new Set<string>();
+    ks.forEach(k => forStatus.get(k)?.forEach(x => sug.add(x)));
+    if (sug.size === 0) continue;
+    const target = PRIORITY.find(x => sug.has(x))!;
+    const cur = String(l.status);
+    if (LOCKED.has(cur) || cur === target) continue;
+    if (target !== 'paciente' && !EARLY.has(cur) && cur !== 'faltou') continue;
+    (moves[target] ||= []).push(l.id);
+    touched++;
+  }
+  const erros: string[] = [];
+  if (apply) {
+    for (const [st, ids] of Object.entries(moves)) {
+      for (let i = 0; i < ids.length; i += 200) {
+        const { error } = await sb.from('leads').update({ status: st }).in('id', ids.slice(i, i + 200));
+        if (error) { erros.push(error.message.includes('invalid input value for enum') ? 'A etapa "Paciente" ainda não existe no banco. Rode no Supabase: ALTER TYPE lead_status ADD VALUE IF NOT EXISTS \'paciente\';' : error.message); break; }
+      }
+    }
+  }
+  return { ok: true, source: 'waha', aplicado: apply, leadsAfetados: touched, porEtapa: Object.fromEntries(Object.entries(moves).map(([k, v]) => [k, v.length])), porEtiqueta: perLabel, semTelefoneResolvido: unresolved, lidsCarregados: lidsLoaded, erros };
+}
+
 export default async function handler(req: Req, res: Res) {
-  if (req.method !== 'POST') return fail(res, 405, 'Use POST.');
+  if (req.method !== 'POST' && req.method !== 'GET') return fail(res, 405, 'Use POST.');
   const missing = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'].filter(k => !env(k));
   if (missing.length) return fail(res, 500, `Variáveis ausentes no servidor: ${missing.join(', ')}`);
   if (!env('WAHA_URL') || !env('WAHA_API_KEY')) {
@@ -100,6 +179,27 @@ export default async function handler(req: Req, res: Res) {
 
   const sb = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'), { auth: { persistSession: false } });
   const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  // Agendador (Vercel Cron, a cada 10 min): aplica as etiquetas do WhatsApp em todas as clínicas, sem ninguém com a tela aberta
+  const cronSecret = env('CRON_SECRET');
+  if (cronSecret && token.length === cronSecret.length && token === cronSecret) {
+    const byClinic = new Map<string, Set<string>>();
+    const add = (cid: unknown, sess: unknown) => { if (cid && sess) { const k = String(cid); if (!byClinic.has(k)) byClinic.set(k, new Set()); byClinic.get(k)!.add(String(sess)); } };
+    const { data: tn } = await sb.from('waha_tenants').select('clinic_id,waha_session,ativo');
+    (tn || []).filter((t: any) => t.ativo !== false).forEach((t: any) => add(t.clinic_id, t.waha_session));
+    const { data: ag } = await sb.from('clinic_integrations').select('clinic_id,subscriber_id').eq('provider', 'agent');
+    (ag || []).forEach((a: any) => add(a.clinic_id, a.subscriber_id));
+    const results: any[] = [];
+    for (const [cid, sess] of byClinic) {
+      try {
+        const r = await syncLabels(sb, cid, [...sess], true);
+        results.push({ clinicId: cid, leadsAfetados: r.leadsAfetados, porEtapa: r.porEtapa, erros: r.erros });
+      } catch (e: any) {
+        results.push({ clinicId: cid, erro: e?.message || 'falhou' });
+      }
+    }
+    return res.status(200).json({ ok: true, cron: true, clinicas: results });
+  }
+  if (req.method !== 'POST') return fail(res, 405, 'Use POST.');
   if (!token) return fail(res, 401, 'Entre no sistema para ver as conversas.');
   const { data: u, error: ue } = await sb.auth.getUser(token);
   if (ue || !u.user) return fail(res, 401, 'Sessão inválida. Entre novamente.');
@@ -231,82 +331,7 @@ export default async function handler(req: Req, res: Res) {
     }
 
     if (body.action === 'labels_sync') {
-      // Lê as etiquetas do WhatsApp (WAHA) e coloca cada lead na etapa certa. apply=false só mostra o que mudaria.
-      const apply = body.apply === true;
-      const norm = (v: string) => v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-      const ruleFor = (name: string): string | null => {
-        const n = norm(name);
-        if (n.includes('paciente')) return 'paciente';
-        if (n.includes('nao veio')) return 'faltou';
-        if (n.includes('avaliacao feita')) return 'compareceu';
-        if (n.includes('avaliacao agendada')) return 'agendamento';
-        if (n.includes('follow') || n.includes('retornar contato')) return '2_contato';
-        return null;
-      };
-      const PRIORITY = ['paciente', 'faltou', 'compareceu', 'agendamento', '2_contato'];
-      const EARLY = new Set(['novo', 'contatado', '1_contato', '2_contato', '3_contato', 'interagiu', 'agendou']);
-      const LOCKED = new Set(['vendido', 'comprou', 'desqualificado', 'perdido', 'paciente']);
-      const forStatus = new Map<string, Set<string>>(); // chave do telefone -> estados sugeridos
-      const perLabel: any[] = [];
-      let unresolved = 0;
-      let lidsLoaded = 0;
-      for (const session of sessions) {
-        const sess = encodeURIComponent(session);
-        const labels = await waha(`/api/${sess}/labels`);
-        if (!Array.isArray(labels)) continue;
-        // Mapa lid -> telefone de uma vez só (uma chamada em vez de uma por contato)
-        const lidMap = new Map<string, string>();
-        const lids = await waha(`/api/${sess}/lids?limit=5000`, 20000);
-        lidsLoaded += Array.isArray(lids) ? lids.length : 0;
-        if (Array.isArray(lids)) for (const x of lids) { if (x?.lid && x?.pn) lidMap.set(String(x.lid), String(x.pn)); }
-        await Promise.all(labels.map(async (l: any) => {
-          const target = ruleFor(String(l.name || ''));
-          if (!target) { perLabel.push({ label: l.name, regra: 'ignorada', chats: 0 }); return; }
-          const chatsRes = await wahaRaw(`/api/${sess}/labels/${encodeURIComponent(String(l.id))}/chats`, 20000);
-          const list: any[] = Array.isArray(chatsRes.json) ? chatsRes.json : [];
-          let matched = 0;
-          for (const c of list) {
-            let id = String(c?.id?._serialized || c?.id || '');
-            if (id.endsWith('@g.us')) continue;
-            if (id.endsWith('@lid')) {
-              const pn = lidMap.get(id) || '';
-              if (!pn) { unresolved++; continue; }
-              id = pn;
-            }
-            const k = key8(id.split('@')[0]);
-            if (!k) continue;
-            matched++;
-            if (!forStatus.has(k)) forStatus.set(k, new Set());
-            forStatus.get(k)!.add(target);
-          }
-          perLabel.push({ label: l.name, regra: target, httpStatus: chatsRes.status, chats: list.length, comTelefone: matched });
-        }));
-      }
-      const { data: leadRows } = await sb.from('leads').select('id,name,phone,whatsapp,status').eq('clinic_id', clinicId).limit(5000);
-      const moves: Record<string, string[]> = {};
-      let touched = 0;
-      for (const l of leadRows || []) {
-        const ks = [key8(l.whatsapp), key8(l.phone)].filter(Boolean);
-        const sug = new Set<string>();
-        ks.forEach(k => forStatus.get(k)?.forEach(x => sug.add(x)));
-        if (sug.size === 0) continue;
-        const target = PRIORITY.find(x => sug.has(x))!;
-        const cur = String(l.status);
-        if (LOCKED.has(cur) || cur === target) continue;
-        if (target !== 'paciente' && !EARLY.has(cur) && cur !== 'faltou') continue;
-        (moves[target] ||= []).push(l.id);
-        touched++;
-      }
-      const erros: string[] = [];
-      if (apply) {
-        for (const [st, ids] of Object.entries(moves)) {
-          for (let i = 0; i < ids.length; i += 200) {
-            const { error } = await sb.from('leads').update({ status: st }).in('id', ids.slice(i, i + 200));
-            if (error) { erros.push(error.message.includes('invalid input value for enum') ? 'A etapa "Paciente" ainda não existe no banco. Rode no Supabase: ALTER TYPE lead_status ADD VALUE IF NOT EXISTS \'paciente\';' : error.message); break; }
-          }
-        }
-      }
-      return res.status(200).json({ ok: true, source: 'waha', aplicado: apply, leadsAfetados: touched, porEtapa: Object.fromEntries(Object.entries(moves).map(([k, v]) => [k, v.length])), porEtiqueta: perLabel, semTelefoneResolvido: unresolved, lidsCarregados: lidsLoaded, erros });
+      return res.status(200).json(await syncLabels(sb, clinicId, sessions, body.apply === true));
     }
 
     if (body.action === 'messages') {
