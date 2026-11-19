@@ -179,7 +179,7 @@ export default async function handler(req: Req, res: Res) {
 
   const sb = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'), { auth: { persistSession: false } });
   const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  // Agendador (Vercel Cron, diário): aplica as etiquetas do WhatsApp em todas as clínicas, sem ninguém com a tela aberta
+  // Agendador (Vercel Schedules, a cada 15 min): aplica as etiquetas do WhatsApp em todas as clínicas, sem ninguém com a tela aberta
   const cronSecret = env('CRON_SECRET');
   if (cronSecret && token.length === cronSecret.length && token === cronSecret) {
     const byClinic = new Map<string, Set<string>>();
