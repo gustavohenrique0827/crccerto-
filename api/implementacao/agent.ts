@@ -107,7 +107,13 @@ export default async function handler(req: Req, res: Res) {
     if (!env('WAHA_URL') || !env('WAHA_API_KEY')) return fail(res, 500, 'WAHA_URL e WAHA_API_KEY ainda não foram configuradas na Vercel.');
 
     if (action === 'start') {
-      const r = await waha(`/api/sessions/${encodeURIComponent(session)}/start`, { method: 'POST' });
+      const enc = encodeURIComponent(session);
+      // sessão que falhou continua "FAILED" mesmo recebendo start: precisa parar antes de iniciar de novo
+      const cur = await waha(`/api/sessions/${enc}`);
+      const curJ: any = cur && cur.ok ? await cur.json().catch(() => ({})) : {};
+      if (curJ.status === 'FAILED' || curJ.status === 'STOPPED') await waha(`/api/sessions/${enc}/stop`, { method: 'POST' });
+      let r = await waha(`/api/sessions/${enc}/start`, { method: 'POST' });
+      if (r && r.status === 404) r = await waha('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: session, start: true }) });
       if (!r || (!r.ok && r.status !== 422)) return fail(res, 502, 'Não consegui iniciar a sessão no WAHA.');
       return res.status(200).json({ ok: true });
     }
