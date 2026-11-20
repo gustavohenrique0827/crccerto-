@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Bot, Building2, CheckCircle2, Loader2, QrCode, ShieldAlert } from 'lucide-react';
+import { Bot, Building2, CheckCircle2, Loader2, ShieldAlert } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useApp } from '../../context/AppContext';
 import { Role } from '../../types';
-import { AgentInfo, AgentStatus, agentQr, agentStart, agentStatus, fetchAgentSetups, provisionAgent } from '../../lib/agentSetup';
+import { AgentInfo, AgentStatus, agentStatus, fetchAgentSetups, provisionAgent } from '../../lib/agentSetup';
+import WhatsappQrCard from './WhatsappQrCard';
 
 const STATUS_TEXT: Record<string, string> = {
   STOPPED: 'Sessão parada', STARTING: 'Iniciando…', SCAN_QR_CODE: 'Aguardando a leitura do QR code',
@@ -20,20 +21,18 @@ export function AgentSetupBody({ clinicId, onDone }: { clinicId: string; onDone?
   const [phone, setPhone] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<AgentStatus | null>(null);
-  const [qr, setQr] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const clinic = clinics.find(c => c.id === clinicId);
   const info = setups[clinicId];
   useEffect(() => { fetchAgentSetups().then(setSetups); }, []);
-  useEffect(() => { setPhone(clinic?.whatsapp || clinic?.phone || ''); setStatus(null); setQr(null); }, [clinicId]);
+  useEffect(() => { setPhone(clinic?.whatsapp || clinic?.phone || ''); setStatus(null); }, [clinicId]);
 
   // Com o agente implantado: acompanha o estado da sessão e mostra o QR quando for a hora
   const refresh = useCallback(async () => {
     if (!clinicId || !setups[clinicId]) return;
     const s = await agentStatus(clinicId);
     setStatus(s);
-    if (s.ok && s.status === 'SCAN_QR_CODE') { const q = await agentQr(clinicId); setQr(q.qr || null); } else setQr(null);
   }, [clinicId, setups]);
   useEffect(() => {
     if (timer.current) clearInterval(timer.current);
@@ -54,14 +53,6 @@ export function AgentSetupBody({ clinicId, onDone }: { clinicId: string; onDone?
     setSetups(await fetchAgentSetups());
     onDone?.();
   };
-  const start = async () => {
-    setBusy(true);
-    const r = await agentStart(clinicId);
-    setBusy(false);
-    if (!r.ok) addToast(r.message || 'Não consegui iniciar a sessão.', 'error');
-    refresh();
-  };
-
   const field = 'w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white';
 
   return (
@@ -96,20 +87,10 @@ export function AgentSetupBody({ clinicId, onDone }: { clinicId: string; onDone?
             <dd className={cn('font-semibold', status?.status === 'WORKING' ? 'text-emerald-600' : 'text-slate-800 dark:text-slate-100')}>{status ? (STATUS_TEXT[status.status || 'UNKNOWN'] || status.status) : 'Verificando…'}{status?.me ? ` · ${status.me}` : ''}</dd>
             {info.proximo_passo && <><dt className="text-slate-400">Próximo passo</dt><dd className="text-slate-700 dark:text-slate-200">{info.proximo_passo}</dd></>}
           </dl>
-          {status?.ok && (status.status === 'STOPPED' || status.status === 'NOT_FOUND' || status.status === 'FAILED') && (
-            <button onClick={start} disabled={busy} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold disabled:opacity-50 cursor-pointer">
-              {busy ? <Loader2 size={15} className="animate-spin" /> : <QrCode size={15} />}Iniciar sessão e gerar QR code
-            </button>
-          )}
-          {qr && (
-            <div className="space-y-2">
-              <img src={qr} alt="QR code do WhatsApp" className="w-56 h-56 rounded-xl border border-slate-200 bg-white p-2" />
-              <p className="text-xs text-slate-500 dark:text-slate-400">No celular da clínica: WhatsApp, Aparelhos conectados, Conectar um aparelho, e leia este código.</p>
-            </div>
-          )}
           {status?.status === 'WORKING' && <p className="text-xs font-semibold text-emerald-600">WhatsApp conectado. O Chat desta clínica já mostra as conversas. Falta ligar a cópia do agente ao CRM e ativá-la no n8n.</p>}
         </section>
       )}
+      <WhatsappQrCard clinicId={clinicId} />
     </div>
   );
 }
