@@ -16,6 +16,7 @@ import SupabaseConfigPanel from './SupabaseConfigPanel';
 import AgentUsagePanel from './AgentUsagePanel';
 import AgentSetupPanel from './AgentSetupPanel';
 import WahaDiagnostic from './WahaDiagnostic';
+import WhatsappQrCard from './WhatsappQrCard';
 import NewClinicModal from '../clinics/NewClinicModal';
 
 type View = 'hub' | 'clinicorp' | 'google' | 'supabase' | 'simples_dental' | 'agent' | 'agent_setup';
@@ -228,6 +229,10 @@ export default function IntegrationsWorkspace() {
           <button onClick={load} aria-label="Atualizar" className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /></button>
         </div>
       </div>
+
+      {(focus && currentClinic ? [currentClinic.id] : clinics.filter(c => byClinic[c.id]?.whatsapp).map(c => c.id)).map(id => (
+        <WhatsappQrCard key={id} clinicId={id} title={clinics.find(c => c.id === id)?.name} />
+      ))}
 
       {groups.map(group => (
         <section key={group} className="space-y-3">

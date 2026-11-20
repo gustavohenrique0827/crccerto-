@@ -97,8 +97,13 @@ export default async function handler(req: Req, res: Res) {
     }
 
     // as demais ações precisam do agente já implantado e do WAHA configurado
-    const session = setup?.subscriber_id as string | undefined;
-    if (!session) return fail(res, 404, 'Esta clínica ainda não tem agente implantado.');
+    // sessão do agente implantado ou, se não houver, a sessão já cadastrada para a clínica (waha_tenants)
+    let session = setup?.subscriber_id as string | undefined;
+    if (!session) {
+      const { data: tn } = await sb.from('waha_tenants').select('waha_session').eq('clinic_id', clinicId).limit(1);
+      session = (tn?.[0]?.waha_session as string | undefined) || undefined;
+    }
+    if (!session) return fail(res, 404, 'Esta clínica ainda não tem uma sessão de WhatsApp.');
     if (!env('WAHA_URL') || !env('WAHA_API_KEY')) return fail(res, 500, 'WAHA_URL e WAHA_API_KEY ainda não foram configuradas na Vercel.');
 
     if (action === 'start') {
